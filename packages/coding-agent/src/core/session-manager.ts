@@ -39,7 +39,7 @@ export interface SessionHeader {
 }
 
 /** Internal append-only marker that preserves the selected leaf across background writes and reloads. */
-export interface SessionLeafEntry {
+interface SessionLeafEntry {
 	type: "session_leaf";
 	leafId: string | null;
 	timestamp: string;
@@ -155,8 +155,10 @@ export type SessionEntry =
 	| LabelEntry
 	| SessionInfoEntry;
 
-/** Raw file entry (includes header and internal leaf-selection markers) */
-export type FileEntry = SessionHeader | SessionLeafEntry | SessionEntry;
+/** Raw public session entry (includes header) */
+export type FileEntry = SessionHeader | SessionEntry;
+
+type StoredEntry = FileEntry | SessionLeafEntry;
 
 /** Tree node for getTree() - defensive copy of session structure */
 export interface SessionTreeNode {
@@ -241,7 +243,7 @@ function generateId(byId: { has(id: string): boolean }): string {
 }
 
 /** Migrate v1 → v2: add id/parentId tree structure. Mutates in place. */
-function migrateV1ToV2(entries: FileEntry[]): void {
+function migrateV1ToV2(entries: StoredEntry[]): void {
 	const ids = new Set<string>();
 	let prevId: string | null = null;
 
@@ -271,7 +273,7 @@ function migrateV1ToV2(entries: FileEntry[]): void {
 }
 
 /** Migrate v2 → v3: rename hookMessage role to custom. Mutates in place. */
-function migrateV2ToV3(entries: FileEntry[]): void {
+function migrateV2ToV3(entries: StoredEntry[]): void {
 	for (const entry of entries) {
 		if (entry.type === "session") {
 			entry.version = 3;
@@ -289,7 +291,7 @@ function migrateV2ToV3(entries: FileEntry[]): void {
 }
 
 /** Migrate v3 → v4: leaf-selection markers are append-only and require only a header version bump. */
-function migrateV3ToV4(entries: FileEntry[]): void {
+function migrateV3ToV4(entries: StoredEntry[]): void {
 	for (const entry of entries) {
 		if (entry.type === "session") {
 			entry.version = 4;
@@ -302,7 +304,7 @@ function migrateV3ToV4(entries: FileEntry[]): void {
  * Run all necessary migrations to bring entries to current version.
  * Mutates entries in place. Returns true if any migration was applied.
  */
-function migrateToCurrentVersion(entries: FileEntry[]): boolean {
+function migrateToCurrentVersion(entries: StoredEntry[]): boolean {
 	const header = entries.find((e) => e.type === "session") as SessionHeader | undefined;
 	const version = header?.version ?? 1;
 
@@ -328,8 +330,8 @@ export function parseSessionEntries(content: string): FileEntry[] {
 	for (const line of lines) {
 		if (!line.trim()) continue;
 		try {
-			const entry = JSON.parse(line) as FileEntry;
-			entries.push(entry);
+			const entry = JSON.parse(line) as StoredEntry;
+			if (entry.type !== "session_leaf") entries.push(entry);
 		} catch {
 			// Skip malformed lines
 		}
@@ -515,22 +517,21 @@ export function getDefaultSessionDir(cwd: string, agentDir: string = getDefaultA
 
 const SESSION_READ_BUFFER_SIZE = 1024 * 1024;
 
-function parseSessionEntryLine(line: string): FileEntry | null {
+function parseSessionEntryLine(line: string): StoredEntry | null {
 	if (!line.trim()) return null;
 	try {
-		return JSON.parse(line) as FileEntry;
+		return JSON.parse(line) as StoredEntry;
 	} catch {
 		// Skip malformed lines
 		return null;
 	}
 }
 
-/** Exported for testing */
-export function loadEntriesFromFile(filePath: string): FileEntry[] {
+function loadStoredEntriesFromFile(filePath: string): StoredEntry[] {
 	const resolvedFilePath = normalizePath(filePath);
 	if (!existsSync(resolvedFilePath)) return [];
 
-	const entries: FileEntry[] = [];
+	const entries: StoredEntry[] = [];
 	const fd = openSync(resolvedFilePath, "r");
 	try {
 		const decoder = new StringDecoder("utf8");
@@ -568,6 +569,11 @@ export function loadEntriesFromFile(filePath: string): FileEntry[] {
 	}
 
 	return entries;
+}
+
+/** Exported for testing */
+export function loadEntriesFromFile(filePath: string): FileEntry[] {
+	return loadStoredEntriesFromFile(filePath).filter((entry): entry is FileEntry => entry.type !== "session_leaf");
 }
 
 function readSessionHeader(filePath: string): SessionHeader | null {
@@ -824,7 +830,7 @@ export class SessionManager {
 	private cwd: string;
 	private persist: boolean;
 	private flushed: boolean = false;
-	private fileEntries: FileEntry[] = [];
+	private fileEntries: StoredEntry[] = [];
 	private byId: Map<string, SessionEntry> = new Map();
 	private labelsById: Map<string, string> = new Map();
 	private labelTimestampsById: Map<string, string> = new Map();
@@ -855,7 +861,7 @@ export class SessionManager {
 	setSessionFile(sessionFile: string): void {
 		this.sessionFile = resolvePath(sessionFile);
 		if (existsSync(this.sessionFile)) {
-			this.fileEntries = loadEntriesFromFile(this.sessionFile);
+			this.fileEntries = loadStoredEntriesFromFile(this.sessionFile);
 
 			// If file was empty, initialize it with a valid session header. If it was
 			// non-empty but did not parse as a pi session, fail without modifying it.
@@ -1567,7 +1573,7 @@ export class SessionManager {
 	static open(path: string, sessionDir?: string, cwdOverride?: string): SessionManager {
 		const resolvedPath = resolvePath(path);
 		// Extract cwd from session header if possible, otherwise use process.cwd()
-		const entries = loadEntriesFromFile(resolvedPath);
+		const entries = loadStoredEntriesFromFile(resolvedPath);
 		const header = entries.find((e) => e.type === "session") as SessionHeader | undefined;
 		const cwd = cwdOverride ?? header?.cwd ?? process.cwd();
 		// If no sessionDir provided, derive from file's parent directory
@@ -1610,7 +1616,7 @@ export class SessionManager {
 	): SessionManager {
 		const resolvedSourcePath = resolvePath(sourcePath);
 		const resolvedTargetCwd = resolvePath(targetCwd);
-		const sourceEntries = loadEntriesFromFile(resolvedSourcePath);
+		const sourceEntries = loadStoredEntriesFromFile(resolvedSourcePath);
 		if (sourceEntries.length === 0) {
 			throw new Error(`Cannot fork: source session file is empty or invalid: ${resolvedSourcePath}`);
 		}

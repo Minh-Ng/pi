@@ -378,7 +378,7 @@ export class AgentSession {
 		// (session persistence, extensions, auto-compaction, retry logic)
 		this._unsubscribeAgent = this.agent.subscribe(this._handleAgentEvent);
 		this._installAgentToolHooks();
-		this._installAgentContextValidation();
+		this._installProviderContextValidation();
 		this._installAgentNextTurnRefresh();
 
 		this._buildRuntime({
@@ -490,14 +490,12 @@ export class AgentSession {
 		};
 	}
 
-	private _installAgentContextValidation(): void {
-		const previousTransformContext = this.agent.transformContext;
-		this.agent.transformContext = async (messages, signal) => {
-			const transformedMessages = previousTransformContext
-				? await previousTransformContext(messages, signal)
-				: messages;
-			validateToolMessageSequence(transformedMessages);
-			return transformedMessages;
+	private _installProviderContextValidation(): void {
+		const previousConvertToLlm = this.agent.convertToLlm;
+		this.agent.convertToLlm = async (messages) => {
+			const providerMessages = await previousConvertToLlm(messages);
+			validateToolMessageSequence(providerMessages);
+			return providerMessages;
 		};
 	}
 

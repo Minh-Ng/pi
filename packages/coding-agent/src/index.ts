@@ -218,8 +218,6 @@ export {
 	type PromptTemplate,
 } from "./core/sdk.ts";
 export {
-	type AppendAtOptions,
-	type AppendAtResult,
 	type BranchSummaryEntry,
 	buildContextEntries,
 	buildSessionContext,
@@ -239,7 +237,6 @@ export {
 	type SessionHeader,
 	type SessionInfo,
 	type SessionInfoEntry,
-	type SessionLeafEntry,
 	SessionManager,
 	type SessionMessageEntry,
 	type SessionTreeNode,

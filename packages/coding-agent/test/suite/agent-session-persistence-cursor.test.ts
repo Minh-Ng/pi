@@ -5,6 +5,7 @@ import type { AgentMessage, AgentTool } from "@earendil-works/pi-agent-core";
 import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { afterEach, describe, expect, it } from "vitest";
+import { convertToLlm } from "../../src/core/messages.ts";
 import { buildSessionContext, SessionManager } from "../../src/core/session-manager.ts";
 import { validateToolMessageSequence } from "../../src/core/tool-message-validation.ts";
 import { createHarness, getMessageText, type Harness } from "./harness.ts";
@@ -103,7 +104,7 @@ describe("AgentSession per-run persistence cursor", () => {
 		);
 		expect(backgroundLeaf?.parentId).toBe(finalAssistant!.id);
 		const runContext = contextAt(sessionManager, backgroundLeaf!.id);
-		validateToolMessageSequence(runContext);
+		validateToolMessageSequence(convertToLlm(runContext));
 		expect(
 			runContext.filter((message) => message.role === "toolResult").map((message) => message.toolCallId),
 		).toEqual([fastCall.id, slowCall.id]);
@@ -113,7 +114,7 @@ describe("AgentSession per-run persistence cursor", () => {
 		expect(sessionFile).toBeDefined();
 		const reopened = SessionManager.open(sessionFile!, sessionDir, tempDir);
 		expect(reopened.getLeafId()).toBe(seedAssistant!.id);
-		validateToolMessageSequence(contextAt(reopened, backgroundLeaf!.id));
+		validateToolMessageSequence(convertToLlm(contextAt(reopened, backgroundLeaf!.id)));
 	});
 
 	it("keeps cancellation results on the run branch without reclaiming the selected leaf", async () => {
@@ -159,7 +160,7 @@ describe("AgentSession per-run persistence cursor", () => {
 		expect(sessionManager.getLeafId()).toBe(seedAssistant!.id);
 		const backgroundLeaf = messageEntries(sessionManager).at(-1);
 		expect(backgroundLeaf).toBeDefined();
-		validateToolMessageSequence(contextAt(sessionManager, backgroundLeaf!.id));
+		validateToolMessageSequence(convertToLlm(contextAt(sessionManager, backgroundLeaf!.id)));
 	});
 
 	it("turns malformed persisted tool context into a local error and allows tree recovery", async () => {

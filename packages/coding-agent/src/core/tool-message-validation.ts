@@ -1,4 +1,4 @@
-import type { AgentMessage } from "@earendil-works/pi-agent-core";
+import type { Message } from "@earendil-works/pi-ai/compat";
 
 function malformedToolSequence(detail: string): Error {
 	return new Error(
@@ -10,7 +10,7 @@ function malformedToolSequence(detail: string): Error {
  * Validate provider-bound agent messages before conversion to provider-specific context.
  * Tool results must immediately follow the assistant tool-call batch and match every call exactly once.
  */
-export function validateToolMessageSequence(messages: AgentMessage[]): void {
+export function validateToolMessageSequence(messages: Message[]): void {
 	const pendingToolCalls = new Set<string>();
 
 	for (const message of messages) {
