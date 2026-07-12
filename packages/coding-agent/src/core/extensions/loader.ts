@@ -289,7 +289,7 @@ function createExtensionAPI(
 			runtime.sendMessage(message, options);
 		},
 
-		sendUserMessage(content, options) {
+		sendUserMessage(content, options): Promise<void> {
 			runtime.assertActive();
 			return runtime.sendUserMessage(content, options);
 		},
