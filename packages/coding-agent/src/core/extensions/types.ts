@@ -1269,13 +1269,13 @@ export interface ExtensionAPI {
 	): void;
 
 	/**
-	 * Send a user message to the agent.
-	 * Resolves after the turn completes when idle, or after the message is queued when streaming.
+	 * Send a user message to the agent. Always triggers a turn.
+	 * When the agent is streaming, use deliverAs to specify how to queue the message.
 	 */
 	sendUserMessage(
 		content: string | (TextContent | ImageContent)[],
 		options?: { deliverAs?: "steer" | "followUp" },
-	): Promise<void>;
+	): void;
 
 	/** Append a custom entry to the session for state persistence (not sent to LLM). */
 	appendEntry<T = unknown>(customType: string, data?: T): void;

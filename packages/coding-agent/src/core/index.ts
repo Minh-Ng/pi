@@ -68,6 +68,7 @@ export {
 	type SessionShutdownEvent,
 	type SessionStartEvent,
 	type SessionTreeEvent,
+	sendUserMessageAndWait,
 	type ToolCallEvent,
 	type ToolCallEventResult,
 	type ToolDefinition,

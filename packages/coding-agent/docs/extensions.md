@@ -1401,11 +1401,16 @@ pi.sendMessage({
 
 ### pi.sendUserMessage(content, options?)
 
-Send a user message to the agent. Unlike `sendMessage()` which sends custom messages, this sends an actual user message that appears as if typed by the user. When the agent is idle, the returned promise resolves after the resulting turn completes.
+Send a user message to the agent. Unlike `sendMessage()` which sends custom messages, this sends an actual user message that appears as if typed by the user. Existing fire-and-forget calls are unchanged. Import `sendUserMessageAndWait()` when later work depends on delivery.
 
 ```typescript
-// Simple text message
-await pi.sendUserMessage("What is 2+2?");
+import { sendUserMessageAndWait } from "@earendil-works/pi-coding-agent";
+
+// Existing fire-and-forget delivery
+pi.sendUserMessage("What is 2+2?");
+
+// Wait until the resulting turn completes while idle
+await sendUserMessageAndWait(pi, "What is 2+2?");
 
 // With content array (text + images)
 pi.sendUserMessage([
@@ -1414,8 +1419,8 @@ pi.sendUserMessage([
 ]);
 
 // During streaming - must specify delivery mode
-await pi.sendUserMessage("Focus on error handling", { deliverAs: "steer" });
-await pi.sendUserMessage("And then summarize", { deliverAs: "followUp" });
+await sendUserMessageAndWait(pi, "Focus on error handling", { deliverAs: "steer" });
+await sendUserMessageAndWait(pi, "And then summarize", { deliverAs: "followUp" });
 ```
 
 **Options:**
@@ -1423,7 +1428,7 @@ await pi.sendUserMessage("And then summarize", { deliverAs: "followUp" });
   - `"steer"` - Queues the message for delivery after the current assistant turn finishes executing its tool calls
   - `"followUp"` - Waits for agent to finish all tools
 
-When streaming, the promise resolves once the message is queued; it does not wait for that queued turn to complete. Calling this method while streaming without `deliverAs` rejects the promise.
+When streaming, `sendUserMessageAndWait()` resolves once the message is queued, not when that queued turn completes. Calling it while streaming without `deliverAs` rejects.
 
 See [send-user-message.ts](../examples/extensions/send-user-message.ts) for a complete example.
 
