@@ -4636,11 +4636,6 @@ export class InteractiveMode {
 					// Ask about summarization
 					done(); // Close selector first
 
-					if (!(await this.promptForTreeNavigationAbort())) {
-						this.showStatus("Navigation cancelled");
-						return;
-					}
-
 					// Loop until user makes a complete choice or cancels to tree
 					let wantsSummary = false;
 					let customInstructions: string | undefined;
@@ -4673,6 +4668,11 @@ export class InteractiveMode {
 							// User made a complete choice
 							break;
 						}
+					}
+
+					if (!(await this.promptForTreeNavigationAbort())) {
+						this.showStatus("Navigation cancelled");
+						return;
 					}
 
 					// Set up escape handler and status indicator if summarizing
