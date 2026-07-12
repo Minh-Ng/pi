@@ -1508,7 +1508,7 @@ export type SendMessageHandler = <T = unknown>(
 export type SendUserMessageHandler = (
 	content: string | (TextContent | ImageContent)[],
 	options?: { deliverAs?: "steer" | "followUp" },
-) => void | Promise<void>;
+) => void;
 
 export type AppendEntryHandler = <T = unknown>(customType: string, data?: T) => void;
 

@@ -145,7 +145,7 @@ describe("regression #2860: replaced session callbacks", () => {
 		let oldPi: ExtensionAPI | undefined;
 		let oldSessionFile: string | undefined;
 		let staleCtxThrows = false;
-		let stalePiThrows = false;
+		let stalePiRejects = false;
 		let replacementSessionFile: string | undefined;
 		let instanceId = 0;
 		const { runtime } = await createRuntimeForTest(
@@ -174,9 +174,9 @@ describe("regression #2860: replaced session callbacks", () => {
 									staleCtxThrows = true;
 								}
 								try {
-									oldPi?.sendUserMessage("stale message");
+									await oldPi?.sendUserMessage("stale message");
 								} catch {
-									stalePiThrows = true;
+									stalePiRejects = true;
 								}
 								await replacedCtx.sendUserMessage("Hello from the new session!");
 							},
@@ -195,7 +195,7 @@ describe("regression #2860: replaced session callbacks", () => {
 		expect(replacementSessionFile).toBeDefined();
 		expect(replacementSessionFile).not.toBe(oldSessionFile);
 		expect(staleCtxThrows).toBe(true);
-		expect(stalePiThrows).toBe(true);
+		expect(stalePiRejects).toBe(true);
 		expect(runtime.session.messages.map((message) => `${message.role}:${getText(message)}`)).toEqual([
 			"user:Hello from the new session!",
 			"assistant:hello reply",

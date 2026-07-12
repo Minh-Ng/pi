@@ -277,6 +277,21 @@ describe("AgentSession prompt characterization", () => {
 		expect(harness.session.messages.map((message) => message.role)).toEqual(["user", "assistant"]);
 	});
 
+	it("returns stale extension failures as rejected promises", async () => {
+		let extensionApi: ExtensionAPI | undefined;
+		const harness = await createHarness({
+			extensionFactories: [
+				(pi) => {
+					extensionApi = pi;
+				},
+			],
+		});
+		harnesses.push(harness);
+		harness.session.extensionRunner.invalidate("stale extension");
+
+		await expect(extensionApi?.sendUserMessage("cannot start")).rejects.toThrow("stale extension");
+	});
+
 	it("rejects extension user message failures and reports awaited handler failures once", async () => {
 		let extensionApi: ExtensionAPI | undefined;
 		const harness = await createHarness({
