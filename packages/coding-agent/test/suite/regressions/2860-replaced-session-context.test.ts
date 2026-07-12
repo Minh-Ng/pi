@@ -12,12 +12,7 @@ import {
 } from "../../../src/core/agent-session-runtime.ts";
 import { AuthStorage } from "../../../src/core/auth-storage.ts";
 import { SessionManager } from "../../../src/core/session-manager.ts";
-import {
-	type ExtensionAPI,
-	type ExtensionCommandContext,
-	type ExtensionFactory,
-	sendUserMessageAndWait,
-} from "../../../src/index.ts";
+import type { ExtensionAPI, ExtensionCommandContext, ExtensionFactory } from "../../../src/index.ts";
 
 function getText(message: AgentSession["messages"][number]): string {
 	if (!("content" in message)) {
@@ -185,7 +180,7 @@ describe("regression #2860: replaced session callbacks", () => {
 									stalePiThrows = true;
 								}
 								try {
-									await sendUserMessageAndWait(oldPi!, "stale message");
+									await oldPi?.sendUserMessageAsync("stale message");
 								} catch {
 									staleAwaitableRejects = true;
 								}

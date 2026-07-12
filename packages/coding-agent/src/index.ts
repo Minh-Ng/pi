@@ -163,7 +163,6 @@ export {
 	isReadToolResult,
 	isToolCallEventType,
 	isWriteToolResult,
-	sendUserMessageAndWait,
 	wrapRegisteredTool,
 	wrapRegisteredTools,
 } from "./core/extensions/index.ts";

@@ -1277,6 +1277,12 @@ export interface ExtensionAPI {
 		options?: { deliverAs?: "steer" | "followUp" },
 	): void;
 
+	/** Send a user message and wait for it to complete or be queued. */
+	sendUserMessageAsync(
+		content: string | (TextContent | ImageContent)[],
+		options?: { deliverAs?: "steer" | "followUp" },
+	): Promise<void>;
+
 	/** Append a custom entry to the session for state persistence (not sent to LLM). */
 	appendEntry<T = unknown>(customType: string, data?: T): void;
 

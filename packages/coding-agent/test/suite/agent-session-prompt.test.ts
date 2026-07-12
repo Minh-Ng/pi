@@ -5,7 +5,7 @@ import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { fauxAssistantMessage, fauxToolCall, type Model } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { type ExtensionAPI, type InputEvent, sendUserMessageAndWait } from "../../src/core/extensions/index.ts";
+import type { ExtensionAPI, InputEvent } from "../../src/core/extensions/index.ts";
 import type { PromptTemplate } from "../../src/core/prompt-templates.ts";
 import { createSyntheticSourceInfo } from "../../src/core/source-info.ts";
 import { createTestResourceLoader } from "../utilities.ts";
@@ -272,19 +272,9 @@ describe("AgentSession prompt characterization", () => {
 		harnesses.push(harness);
 		harness.setResponses([fauxAssistantMessage("response")]);
 
-		await sendUserMessageAndWait(extensionApi!, "from extension API");
+		await extensionApi?.sendUserMessageAsync("from extension API");
 
 		expect(harness.session.messages.map((message) => message.role)).toEqual(["user", "assistant"]);
-	});
-
-	it("rejects unsupported extension API instances without calling the legacy method", async () => {
-		const sendUserMessage = vi.fn();
-		const unsupportedApi = { sendUserMessage } as unknown as ExtensionAPI;
-
-		await expect(sendUserMessageAndWait(unsupportedApi, "cannot start")).rejects.toThrow(
-			"Awaitable user message delivery is unavailable",
-		);
-		expect(sendUserMessage).not.toHaveBeenCalled();
 	});
 
 	it("returns stale extension failures as rejected promises", async () => {
@@ -299,7 +289,7 @@ describe("AgentSession prompt characterization", () => {
 		harnesses.push(harness);
 		harness.session.extensionRunner.invalidate("stale extension");
 
-		await expect(sendUserMessageAndWait(extensionApi!, "cannot start")).rejects.toThrow("stale extension");
+		await expect(extensionApi?.sendUserMessageAsync("cannot start")).rejects.toThrow("stale extension");
 	});
 
 	it("rejects awaitable failures and preserves fire-and-forget error reporting", async () => {
@@ -316,7 +306,7 @@ describe("AgentSession prompt characterization", () => {
 		const errorEvents: string[] = [];
 		harness.session.extensionRunner.onError((error) => errorEvents.push(error.event));
 
-		await expect(sendUserMessageAndWait(extensionApi!, "cannot start")).rejects.toThrow();
+		await expect(extensionApi?.sendUserMessageAsync("cannot start")).rejects.toThrow();
 		expect(errorEvents).toEqual([]);
 
 		extensionApi?.sendUserMessage("cannot start");
@@ -392,7 +382,7 @@ describe("AgentSession prompt characterization", () => {
 
 		const promptPromise = harness.session.prompt("start");
 		await sawToolStart;
-		await sendUserMessageAndWait(extensionApi!, "queued", { deliverAs: "followUp" });
+		await extensionApi?.sendUserMessageAsync("queued", { deliverAs: "followUp" });
 
 		expect(inputEvents.map((event) => event.streamingBehavior)).toEqual([undefined, "followUp"]);
 
