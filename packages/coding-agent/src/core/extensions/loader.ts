@@ -291,7 +291,7 @@ function createExtensionAPI(
 
 		sendUserMessage(content, options): Promise<void> {
 			runtime.assertActive();
-			return runtime.sendUserMessage(content, options);
+			return Promise.resolve(runtime.sendUserMessage(content, options));
 		},
 
 		appendEntry(customType: string, data?: unknown): void {

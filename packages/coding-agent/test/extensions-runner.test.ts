@@ -72,7 +72,7 @@ describe("ExtensionRunner", () => {
 
 	const extensionActions: ExtensionActions = {
 		sendMessage: () => {},
-		sendUserMessage: () => Promise.resolve(),
+		sendUserMessage: () => {},
 		appendEntry: () => {},
 		setSessionName: () => {},
 		getSessionName: () => undefined,
