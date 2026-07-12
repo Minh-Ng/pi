@@ -5,7 +5,7 @@ import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { fauxAssistantMessage, fauxToolCall, type Model } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { afterEach, describe, expect, it } from "vitest";
-import type { InputEvent } from "../../src/core/extensions/index.ts";
+import type { ExtensionAPI, InputEvent } from "../../src/core/extensions/index.ts";
 import type { PromptTemplate } from "../../src/core/prompt-templates.ts";
 import { createSyntheticSourceInfo } from "../../src/core/source-info.ts";
 import { createTestResourceLoader } from "../utilities.ts";
@@ -254,10 +254,115 @@ describe("AgentSession prompt characterization", () => {
 
 		harness.setResponses([fauxAssistantMessage("response")]);
 
-		await harness.session.sendUserMessage("from extension");
+		const result = await harness.session.sendUserMessage("from extension");
 
+		expect(result).toBe("started");
 		expect(harness.session.messages.map((message) => message.role)).toEqual(["user", "assistant"]);
 		expect(getMessageText(harness.session.messages[0]!)).toBe("from extension");
+	});
+
+	it("reports when an extension user message starts an agent run", async () => {
+		let extensionApi: ExtensionAPI | undefined;
+		const harness = await createHarness({
+			extensionFactories: [
+				(pi) => {
+					extensionApi = pi;
+				},
+			],
+		});
+		harnesses.push(harness);
+		harness.setResponses([fauxAssistantMessage("response")]);
+
+		const result = await extensionApi?.sendUserMessage("from extension API");
+
+		expect(result).toBe("started");
+	});
+
+	it("reports when an extension user message is consumed by an input handler", async () => {
+		let extensionApi: ExtensionAPI | undefined;
+		const harness = await createHarness({
+			extensionFactories: [
+				(pi) => {
+					extensionApi = pi;
+					pi.on("input", () => ({ action: "handled" }));
+				},
+			],
+		});
+		harnesses.push(harness);
+
+		const result = await extensionApi?.sendUserMessage("handled by extension");
+
+		expect(result).toBe("handled");
+		expect(harness.session.messages).toEqual([]);
+	});
+
+	it("reports extension user message preflight failures", async () => {
+		let extensionApi: ExtensionAPI | undefined;
+		const harness = await createHarness({
+			withConfiguredAuth: false,
+			extensionFactories: [
+				(pi) => {
+					extensionApi = pi;
+				},
+			],
+		});
+		harnesses.push(harness);
+
+		const result = await extensionApi?.sendUserMessage("cannot start");
+
+		expect(result).toBe("failed");
+		expect(harness.session.messages).toEqual([]);
+	});
+
+	it("reports when an extension user message is queued during streaming", async () => {
+		let extensionApi: ExtensionAPI | undefined;
+		let releaseToolExecution: (() => void) | undefined;
+		const toolRelease = new Promise<void>((resolve) => {
+			releaseToolExecution = resolve;
+		});
+		const waitTool: AgentTool = {
+			name: "wait",
+			label: "Wait",
+			description: "Wait for release",
+			parameters: Type.Object({}),
+			execute: async () => {
+				await toolRelease;
+				return {
+					content: [{ type: "text", text: "released" }],
+					details: {},
+				};
+			},
+		};
+		const harness = await createHarness({
+			tools: [waitTool],
+			extensionFactories: [
+				(pi) => {
+					extensionApi = pi;
+				},
+			],
+		});
+		harnesses.push(harness);
+		harness.setResponses([
+			fauxAssistantMessage(fauxToolCall("wait", {}), { stopReason: "toolUse" }),
+			fauxAssistantMessage("done"),
+		]);
+
+		const sawToolStart = new Promise<void>((resolve) => {
+			const unsubscribe = harness.session.subscribe((event) => {
+				if (event.type === "tool_execution_start") {
+					unsubscribe();
+					resolve();
+				}
+			});
+		});
+		const promptPromise = harness.session.prompt("start");
+		await sawToolStart;
+
+		const result = await extensionApi?.sendUserMessage("queue me", { deliverAs: "followUp" });
+		expect(result).toBe("queued");
+
+		releaseToolExecution?.();
+		await promptPromise;
 	});
 
 	it("does not report streamingBehavior to input handlers while idle", async () => {

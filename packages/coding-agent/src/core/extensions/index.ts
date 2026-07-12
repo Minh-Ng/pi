@@ -164,6 +164,7 @@ export type {
 	// Events - User Bash
 	UserBashEvent,
 	UserBashEventResult,
+	UserMessageDeliveryResult,
 	WidgetPlacement,
 	WorkingIndicatorOptions,
 	WriteToolCallEvent,
