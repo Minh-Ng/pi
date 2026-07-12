@@ -1401,11 +1401,14 @@ pi.sendMessage({
 
 ### pi.sendUserMessage(content, options?)
 
-Send a user message to the agent. Unlike `sendMessage()` which sends custom messages, this sends an actual user message that appears as if typed by the user. Always triggers a turn.
+Send a user message to the agent. Unlike `sendMessage()` which sends custom messages, this sends an actual user message that appears as if typed by the user. Existing `sendUserMessage()` calls remain fire-and-forget; use `sendUserMessageAsync()` when later work depends on delivery.
 
 ```typescript
-// Simple text message
+// Existing fire-and-forget delivery
 pi.sendUserMessage("What is 2+2?");
+
+// Wait until the resulting turn completes while idle
+await pi.sendUserMessageAsync("What is 2+2?");
 
 // With content array (text + images)
 pi.sendUserMessage([
@@ -1414,8 +1417,8 @@ pi.sendUserMessage([
 ]);
 
 // During streaming - must specify delivery mode
-pi.sendUserMessage("Focus on error handling", { deliverAs: "steer" });
-pi.sendUserMessage("And then summarize", { deliverAs: "followUp" });
+await pi.sendUserMessageAsync("Focus on error handling", { deliverAs: "steer" });
+await pi.sendUserMessageAsync("And then summarize", { deliverAs: "followUp" });
 ```
 
 **Options:**
@@ -1423,7 +1426,7 @@ pi.sendUserMessage("And then summarize", { deliverAs: "followUp" });
   - `"steer"` - Queues the message for delivery after the current assistant turn finishes executing its tool calls
   - `"followUp"` - Waits for agent to finish all tools
 
-When not streaming, the message is sent immediately and triggers a new turn. When streaming without `deliverAs`, throws an error.
+When streaming, `sendUserMessageAsync()` resolves once the message is queued, not when that queued turn completes. Calling it while streaming without `deliverAs` rejects.
 
 See [send-user-message.ts](../examples/extensions/send-user-message.ts) for a complete example.
 

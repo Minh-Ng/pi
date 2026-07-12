@@ -146,6 +146,7 @@ describe("regression #2860: replaced session callbacks", () => {
 		let oldSessionFile: string | undefined;
 		let staleCtxThrows = false;
 		let stalePiThrows = false;
+		let staleAwaitableRejects = false;
 		let replacementSessionFile: string | undefined;
 		let instanceId = 0;
 		const { runtime } = await createRuntimeForTest(
@@ -178,6 +179,11 @@ describe("regression #2860: replaced session callbacks", () => {
 								} catch {
 									stalePiThrows = true;
 								}
+								try {
+									await oldPi?.sendUserMessageAsync("stale message");
+								} catch {
+									staleAwaitableRejects = true;
+								}
 								await replacedCtx.sendUserMessage("Hello from the new session!");
 							},
 						});
@@ -196,6 +202,7 @@ describe("regression #2860: replaced session callbacks", () => {
 		expect(replacementSessionFile).not.toBe(oldSessionFile);
 		expect(staleCtxThrows).toBe(true);
 		expect(stalePiThrows).toBe(true);
+		expect(staleAwaitableRejects).toBe(true);
 		expect(runtime.session.messages.map((message) => `${message.role}:${getText(message)}`)).toEqual([
 			"user:Hello from the new session!",
 			"assistant:hello reply",

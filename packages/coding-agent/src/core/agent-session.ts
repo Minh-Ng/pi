@@ -55,6 +55,7 @@ import {
 import { DEFAULT_THINKING_LEVEL } from "./defaults.ts";
 import { exportSessionToHtml, type ToolHtmlRenderer } from "./export-html/index.ts";
 import { createToolHtmlRenderer } from "./export-html/tool-renderer.ts";
+import { bindSendUserMessageAsync } from "./extensions/async-message-delivery.ts";
 import {
 	type ContextUsage,
 	type ExtensionCommandContextActions,
@@ -2517,6 +2518,11 @@ export class AgentSession {
 				extensionsResult.runtime.flagValues.set(name, value);
 			}
 		}
+
+		bindSendUserMessageAsync(extensionsResult.runtime, (content, options) => {
+			extensionsResult.runtime.assertActive();
+			return this.sendUserMessage(content, options);
+		});
 
 		this._extensionRunner = new ExtensionRunner(
 			extensionsResult.extensions,

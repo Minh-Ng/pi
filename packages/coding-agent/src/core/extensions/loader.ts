@@ -29,6 +29,7 @@ import type { ExecOptions } from "../exec.ts";
 import { execCommand } from "../exec.ts";
 import { createSyntheticSourceInfo } from "../source-info.ts";
 import { time } from "../timings.ts";
+import { sendUserMessageAsync as deliverUserMessageAsync } from "./async-message-delivery.ts";
 import type {
 	EntryRenderer,
 	Extension,
@@ -292,6 +293,10 @@ function createExtensionAPI(
 		sendUserMessage(content, options): void {
 			runtime.assertActive();
 			runtime.sendUserMessage(content, options);
+		},
+
+		sendUserMessageAsync(content, options): Promise<void> {
+			return deliverUserMessageAsync(runtime, content, options);
 		},
 
 		appendEntry(customType: string, data?: unknown): void {
