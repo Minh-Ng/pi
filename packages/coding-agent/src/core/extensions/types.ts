@@ -388,7 +388,7 @@ export interface ReplacedSessionContext extends ExtensionCommandContext {
 	sendUserMessage(
 		content: string | (TextContent | ImageContent)[],
 		options?: { deliverAs?: "steer" | "followUp" },
-	): Promise<UserMessageDeliveryResult>;
+	): Promise<void>;
 }
 
 // ============================================================================
@@ -1269,14 +1269,13 @@ export interface ExtensionAPI {
 	): void;
 
 	/**
-	 * Send a user message to the agent. Always triggers or queues a turn unless an input handler consumes it.
+	 * Send a user message to the agent and wait for it to be processed.
 	 * When the agent is streaming, use deliverAs to specify how to queue the message.
-	 * Returns the delivery outcome; failures are also reported through the extension error channel.
 	 */
 	sendUserMessage(
 		content: string | (TextContent | ImageContent)[],
 		options?: { deliverAs?: "steer" | "followUp" },
-	): Promise<UserMessageDeliveryResult>;
+	): Promise<void>;
 
 	/** Append a custom entry to the session for state persistence (not sent to LLM). */
 	appendEntry<T = unknown>(customType: string, data?: T): void;
@@ -1506,12 +1505,10 @@ export type SendMessageHandler = <T = unknown>(
 	options?: { triggerTurn?: boolean; deliverAs?: "steer" | "followUp" | "nextTurn" },
 ) => void;
 
-export type UserMessageDeliveryResult = "started" | "handled" | "queued" | "failed";
-
 export type SendUserMessageHandler = (
 	content: string | (TextContent | ImageContent)[],
 	options?: { deliverAs?: "steer" | "followUp" },
-) => Promise<UserMessageDeliveryResult>;
+) => Promise<void>;
 
 export type AppendEntryHandler = <T = unknown>(customType: string, data?: T) => void;
 

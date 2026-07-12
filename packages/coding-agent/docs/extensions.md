@@ -1401,12 +1401,11 @@ pi.sendMessage({
 
 ### pi.sendUserMessage(content, options?)
 
-Send a user message to the agent. Unlike `sendMessage()` which sends custom messages, this sends an actual user message that appears as if typed by the user. It returns an awaitable delivery result.
+Send a user message to the agent. Unlike `sendMessage()` which sends custom messages, this sends an actual user message that appears as if typed by the user. It returns a promise that can be awaited until processing completes.
 
 ```typescript
 // Simple text message
-const result = await pi.sendUserMessage("What is 2+2?");
-// "started" | "handled" | "queued" | "failed"
+await pi.sendUserMessage("What is 2+2?");
 
 // With content array (text + images)
 pi.sendUserMessage([
@@ -1424,22 +1423,7 @@ pi.sendUserMessage("And then summarize", { deliverAs: "followUp" });
   - `"steer"` - Queues the message for delivery after the current assistant turn finishes executing its tool calls
   - `"followUp"` - Waits for agent to finish all tools
 
-When not streaming, the message is sent immediately and triggers a new turn. When streaming without `deliverAs`, delivery returns `"failed"`.
-
-**Delivery results:**
-- `"started"` - The message passed preflight and started an agent run.
-- `"handled"` - An extension command or `input` handler consumed the message without starting a run.
-- `"queued"` - The active run accepted the message as steering or follow-up input.
-- `"failed"` - Authentication, preflight, or delivery failed before completion. Pi also reports the underlying error through the extension error channel.
-
-Await the result when extension state depends on successful delivery:
-
-```typescript
-const result = await pi.sendUserMessage(prompt);
-if (result === "failed") {
-  clearPendingBranchState();
-}
-```
+When not streaming, the message is sent immediately and triggers a new turn. When streaming without `deliverAs`, the promise rejects. Failures are also reported through the extension error channel. Existing fire-and-forget calls remain valid; await the promise when later work depends on successful processing.
 
 See [send-user-message.ts](../examples/extensions/send-user-message.ts) for a complete example.
 

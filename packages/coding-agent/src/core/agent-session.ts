@@ -79,7 +79,6 @@ import {
 	type TreePreparation,
 	type TurnEndEvent,
 	type TurnStartEvent,
-	type UserMessageDeliveryResult,
 	wrapRegisteredTools,
 } from "./extensions/index.ts";
 import { emitSessionShutdownEvent } from "./extensions/runner.ts";
@@ -213,8 +212,6 @@ export interface PromptOptions {
 	source?: InputSource;
 	/** Internal hook used by RPC mode to observe prompt preflight acceptance or rejection. */
 	preflightResult?: (success: boolean) => void;
-	/** Internal hook used by extension message delivery to classify accepted input. */
-	deliveryResult?: (result: Exclude<UserMessageDeliveryResult, "failed">) => void;
 }
 
 /** Result from cycleModel() */
@@ -1079,7 +1076,6 @@ export class AgentSession {
 	async prompt(text: string, options?: PromptOptions): Promise<void> {
 		const expandPromptTemplates = options?.expandPromptTemplates ?? true;
 		const preflightResult = options?.preflightResult;
-		const deliveryResult = options?.deliveryResult;
 		let messages: AgentMessage[] | undefined;
 
 		try {
@@ -1090,7 +1086,6 @@ export class AgentSession {
 				if (handled) {
 					// Extension command executed, no prompt to send
 					preflightResult?.(true);
-					deliveryResult?.("handled");
 					return;
 				}
 			}
@@ -1107,7 +1102,6 @@ export class AgentSession {
 				);
 				if (inputResult.action === "handled") {
 					preflightResult?.(true);
-					deliveryResult?.("handled");
 					return;
 				}
 				if (inputResult.action === "transform") {
@@ -1136,7 +1130,6 @@ export class AgentSession {
 					await this._queueSteer(expandedText, currentImages);
 				}
 				preflightResult?.(true);
-				deliveryResult?.("queued");
 				return;
 			}
 
@@ -1227,7 +1220,6 @@ export class AgentSession {
 		}
 
 		preflightResult?.(true);
-		deliveryResult?.("started");
 		await this._runAgentPrompt(messages);
 	}
 
@@ -1439,7 +1431,7 @@ export class AgentSession {
 	async sendUserMessage(
 		content: string | (TextContent | ImageContent)[],
 		options?: { deliverAs?: "steer" | "followUp" },
-	): Promise<Exclude<UserMessageDeliveryResult, "failed">> {
+	): Promise<void> {
 		// Normalize content to text string + optional images
 		let text: string;
 		let images: ImageContent[] | undefined;
@@ -1461,20 +1453,12 @@ export class AgentSession {
 		}
 
 		// Use prompt() with expandPromptTemplates: false to skip command handling and template expansion
-		let result: Exclude<UserMessageDeliveryResult, "failed"> | undefined;
 		await this.prompt(text, {
 			expandPromptTemplates: false,
 			streamingBehavior: options?.deliverAs,
 			images,
 			source: "extension",
-			deliveryResult: (deliveryResult) => {
-				result = deliveryResult;
-			},
 		});
-		if (!result) {
-			throw new Error("User message delivery completed without a result");
-		}
-		return result;
 	}
 
 	/**
@@ -2291,23 +2275,6 @@ export class AgentSession {
 		this.agent.state.model = refreshedModel;
 	}
 
-	private async _sendExtensionUserMessage(
-		runner: ExtensionRunner,
-		content: string | (TextContent | ImageContent)[],
-		options?: { deliverAs?: "steer" | "followUp" },
-	): Promise<UserMessageDeliveryResult> {
-		try {
-			return await this.sendUserMessage(content, options);
-		} catch (err) {
-			runner.emitError({
-				extensionPath: "<runtime>",
-				event: "send_user_message",
-				error: err instanceof Error ? err.message : String(err),
-			});
-			return "failed";
-		}
-	}
-
 	private _bindExtensionCore(runner: ExtensionRunner): void {
 		const getCommands = (): SlashCommandInfo[] => {
 			const extensionCommands: SlashCommandInfo[] = runner.getRegisteredCommands().map((command) => ({
@@ -2345,7 +2312,17 @@ export class AgentSession {
 						});
 					});
 				},
-				sendUserMessage: (content, options) => this._sendExtensionUserMessage(runner, content, options),
+				sendUserMessage: (content, options) => {
+					const delivery = this.sendUserMessage(content, options);
+					void delivery.catch((err) => {
+						runner.emitError({
+							extensionPath: "<runtime>",
+							event: "send_user_message",
+							error: err instanceof Error ? err.message : String(err),
+						});
+					});
+					return delivery;
+				},
 				appendEntry: (customType, data) => {
 					const entryId = this.sessionManager.appendCustomEntry(customType, data);
 					const entry = this.sessionManager.getEntry(entryId);
@@ -3251,8 +3228,7 @@ export class AgentSession {
 			Object.getOwnPropertyDescriptors(this._extensionRunner.createCommandContext()),
 		) as ReplacedSessionContext;
 		context.sendMessage = (message, options) => this.sendCustomMessage(message, options);
-		context.sendUserMessage = (content, options) =>
-			this._sendExtensionUserMessage(this._extensionRunner, content, options);
+		context.sendUserMessage = (content, options) => this.sendUserMessage(content, options);
 		return context;
 	}
 

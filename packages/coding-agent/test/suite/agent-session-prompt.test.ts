@@ -254,14 +254,13 @@ describe("AgentSession prompt characterization", () => {
 
 		harness.setResponses([fauxAssistantMessage("response")]);
 
-		const result = await harness.session.sendUserMessage("from extension");
+		await harness.session.sendUserMessage("from extension");
 
-		expect(result).toBe("started");
 		expect(harness.session.messages.map((message) => message.role)).toEqual(["user", "assistant"]);
 		expect(getMessageText(harness.session.messages[0]!)).toBe("from extension");
 	});
 
-	it("reports when an extension user message starts an agent run", async () => {
+	it("allows extensions to await user message processing", async () => {
 		let extensionApi: ExtensionAPI | undefined;
 		const harness = await createHarness({
 			extensionFactories: [
@@ -273,30 +272,12 @@ describe("AgentSession prompt characterization", () => {
 		harnesses.push(harness);
 		harness.setResponses([fauxAssistantMessage("response")]);
 
-		const result = await extensionApi?.sendUserMessage("from extension API");
+		await extensionApi?.sendUserMessage("from extension API");
 
-		expect(result).toBe("started");
+		expect(harness.session.messages.map((message) => message.role)).toEqual(["user", "assistant"]);
 	});
 
-	it("reports when an extension user message is consumed by an input handler", async () => {
-		let extensionApi: ExtensionAPI | undefined;
-		const harness = await createHarness({
-			extensionFactories: [
-				(pi) => {
-					extensionApi = pi;
-					pi.on("input", () => ({ action: "handled" }));
-				},
-			],
-		});
-		harnesses.push(harness);
-
-		const result = await extensionApi?.sendUserMessage("handled by extension");
-
-		expect(result).toBe("handled");
-		expect(harness.session.messages).toEqual([]);
-	});
-
-	it("reports extension user message preflight failures", async () => {
+	it("rejects extension user message failures and reports them", async () => {
 		let extensionApi: ExtensionAPI | undefined;
 		const harness = await createHarness({
 			withConfiguredAuth: false,
@@ -307,62 +288,13 @@ describe("AgentSession prompt characterization", () => {
 			],
 		});
 		harnesses.push(harness);
+		const errors: string[] = [];
+		harness.session.extensionRunner.onError((error) => errors.push(error.error));
 
-		const result = await extensionApi?.sendUserMessage("cannot start");
+		await expect(extensionApi?.sendUserMessage("cannot start")).rejects.toThrow();
 
-		expect(result).toBe("failed");
+		expect(errors).toHaveLength(1);
 		expect(harness.session.messages).toEqual([]);
-	});
-
-	it("reports when an extension user message is queued during streaming", async () => {
-		let extensionApi: ExtensionAPI | undefined;
-		let releaseToolExecution: (() => void) | undefined;
-		const toolRelease = new Promise<void>((resolve) => {
-			releaseToolExecution = resolve;
-		});
-		const waitTool: AgentTool = {
-			name: "wait",
-			label: "Wait",
-			description: "Wait for release",
-			parameters: Type.Object({}),
-			execute: async () => {
-				await toolRelease;
-				return {
-					content: [{ type: "text", text: "released" }],
-					details: {},
-				};
-			},
-		};
-		const harness = await createHarness({
-			tools: [waitTool],
-			extensionFactories: [
-				(pi) => {
-					extensionApi = pi;
-				},
-			],
-		});
-		harnesses.push(harness);
-		harness.setResponses([
-			fauxAssistantMessage(fauxToolCall("wait", {}), { stopReason: "toolUse" }),
-			fauxAssistantMessage("done"),
-		]);
-
-		const sawToolStart = new Promise<void>((resolve) => {
-			const unsubscribe = harness.session.subscribe((event) => {
-				if (event.type === "tool_execution_start") {
-					unsubscribe();
-					resolve();
-				}
-			});
-		});
-		const promptPromise = harness.session.prompt("start");
-		await sawToolStart;
-
-		const result = await extensionApi?.sendUserMessage("queue me", { deliverAs: "followUp" });
-		expect(result).toBe("queued");
-
-		releaseToolExecution?.();
-		await promptPromise;
 	});
 
 	it("does not report streamingBehavior to input handlers while idle", async () => {

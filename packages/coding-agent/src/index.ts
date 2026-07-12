@@ -146,7 +146,6 @@ export type {
 	TurnStartEvent,
 	UserBashEvent,
 	UserBashEventResult,
-	UserMessageDeliveryResult,
 	WidgetPlacement,
 	WorkingIndicatorOptions,
 	WriteToolCallEvent,
