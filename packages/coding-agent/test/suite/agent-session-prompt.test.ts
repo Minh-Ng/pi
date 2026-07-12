@@ -277,6 +277,16 @@ describe("AgentSession prompt characterization", () => {
 		expect(harness.session.messages.map((message) => message.role)).toEqual(["user", "assistant"]);
 	});
 
+	it("rejects unsupported extension API instances without calling the legacy method", async () => {
+		const sendUserMessage = vi.fn();
+		const unsupportedApi = { sendUserMessage } as unknown as ExtensionAPI;
+
+		await expect(sendUserMessageAndWait(unsupportedApi, "cannot start")).rejects.toThrow(
+			"Awaitable user message delivery is unavailable",
+		);
+		expect(sendUserMessage).not.toHaveBeenCalled();
+	});
+
 	it("returns stale extension failures as rejected promises", async () => {
 		let extensionApi: ExtensionAPI | undefined;
 		const harness = await createHarness({
