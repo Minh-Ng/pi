@@ -2807,10 +2807,6 @@ export class AgentSession {
 			return { cancelled: false };
 		}
 
-		if (this._isAgentRunActive) {
-			return { cancelled: true };
-		}
-
 		// Model required for summarization
 		if (options.summarize && !this.model) {
 			throw new Error("No model available for summarization");
@@ -2819,6 +2815,10 @@ export class AgentSession {
 		const targetEntry = this.sessionManager.getEntry(targetId);
 		if (!targetEntry) {
 			throw new Error(`Entry ${targetId} not found`);
+		}
+
+		if (this._isAgentRunActive) {
+			return { cancelled: true };
 		}
 
 		// Collect entries to summarize (from old leaf to common ancestor)

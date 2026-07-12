@@ -86,6 +86,7 @@ describe("AgentSession active-run tree navigation", () => {
 
 		try {
 			await expect(harness.session.navigateTree(originatingLeafId!)).resolves.toEqual({ cancelled: false });
+			await expect(harness.session.navigateTree("missing-entry")).rejects.toThrow("Entry missing-entry not found");
 			await expect(harness.session.navigateTree(seedUserEntry!.id)).resolves.toEqual({ cancelled: true });
 			expect(sessionManager.getLeafId()).toBe(originatingLeafId);
 		} finally {
