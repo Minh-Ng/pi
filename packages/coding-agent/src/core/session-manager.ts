@@ -176,62 +176,6 @@ export interface SessionContext {
 	model: { provider: string; modelId: string } | null;
 }
 
-export interface AppendAtOptions {
-	/** Advance the visible leaf only when it still equals this expected entry. Omit to append in the background. */
-	advanceLeafIfCurrent?: string | null;
-}
-
-export interface AppendAtResult {
-	id: string;
-	advancedLeaf: boolean;
-}
-
-const appendMessageAtKey = Symbol("SessionManager.appendMessageAt");
-const appendCompactionAtKey = Symbol("SessionManager.appendCompactionAt");
-const appendCustomMessageEntryAtKey = Symbol("SessionManager.appendCustomMessageEntryAt");
-
-export function appendMessageAt(
-	sessionManager: SessionManager,
-	message: Message | CustomMessage | BashExecutionMessage,
-	parentId: string | null,
-	options: AppendAtOptions = {},
-): AppendAtResult {
-	return sessionManager[appendMessageAtKey](message, parentId, options);
-}
-
-export function appendCompactionAt<T = unknown>(
-	sessionManager: SessionManager,
-	summary: string,
-	firstKeptEntryId: string,
-	tokensBefore: number,
-	details: T | undefined,
-	fromHook: boolean | undefined,
-	parentId: string | null,
-	options: AppendAtOptions = {},
-): AppendAtResult {
-	return sessionManager[appendCompactionAtKey](
-		summary,
-		firstKeptEntryId,
-		tokensBefore,
-		details,
-		fromHook,
-		parentId,
-		options,
-	);
-}
-
-export function appendCustomMessageEntryAt<T = unknown>(
-	sessionManager: SessionManager,
-	customType: string,
-	content: string | (TextContent | ImageContent)[],
-	display: boolean,
-	details: T | undefined,
-	parentId: string | null,
-	options: AppendAtOptions = {},
-): AppendAtResult {
-	return sessionManager[appendCustomMessageEntryAtKey](customType, content, display, details, parentId, options);
-}
-
 export interface SessionInfo {
 	path: string;
 	id: string;
@@ -1030,7 +974,7 @@ export class SessionManager {
 		return this.sessionFile;
 	}
 
-	_persist(entry: SessionLeafEntry | SessionEntry): void {
+	private _persistStoredEntry(entry: StoredEntry): void {
 		if (!this.persist || !this.sessionFile) return;
 
 		const hasAssistant = this.fileEntries.some((e) => e.type === "message" && e.message.role === "assistant");
@@ -1059,6 +1003,10 @@ export class SessionManager {
 		}
 	}
 
+	_persist(entry: SessionEntry): void {
+		this._persistStoredEntry(entry);
+	}
+
 	private _appendLeafSelection(): void {
 		if (!this.persist) return;
 		const entry: SessionLeafEntry = {
@@ -1067,29 +1015,14 @@ export class SessionManager {
 			timestamp: new Date().toISOString(),
 		};
 		this.fileEntries.push(entry);
-		this._persist(entry);
+		this._persistStoredEntry(entry);
 	}
 
-	private _appendEntry(entry: SessionEntry, advanceLeaf = true): void {
+	private _appendEntry(entry: SessionEntry): void {
 		this.fileEntries.push(entry);
 		this.byId.set(entry.id, entry);
-		if (advanceLeaf) {
-			this.leafId = entry.id;
-		}
+		this.leafId = entry.id;
 		this._persist(entry);
-		if (!advanceLeaf) {
-			this._appendLeafSelection();
-		}
-	}
-
-	private _validateAppendParent(parentId: string | null): void {
-		if (parentId !== null && !this.byId.has(parentId)) {
-			throw new Error(`Entry ${parentId} not found`);
-		}
-	}
-
-	private _shouldAdvanceLeaf(options: AppendAtOptions): boolean {
-		return "advanceLeafIfCurrent" in options && this.leafId === options.advanceLeafIfCurrent;
 	}
 
 	/** Append a message as child of current leaf, then advance leaf. Returns entry id.
@@ -1099,30 +1032,15 @@ export class SessionManager {
 	 * These need to be appended via appendCompaction() and appendBranchSummary() methods.
 	 */
 	appendMessage(message: Message | CustomMessage | BashExecutionMessage): string {
-		const parentId = this.leafId;
-		return this[appendMessageAtKey](message, parentId, { advanceLeafIfCurrent: parentId }).id;
-	}
-
-	/**
-	 * Append a message under an explicit parent. The visible leaf advances only when
-	 * advanceLeafIfCurrent matches, allowing background runs to persist without stealing selection.
-	 */
-	[appendMessageAtKey](
-		message: Message | CustomMessage | BashExecutionMessage,
-		parentId: string | null,
-		options: AppendAtOptions = {},
-	): AppendAtResult {
-		this._validateAppendParent(parentId);
 		const entry: SessionMessageEntry = {
 			type: "message",
 			id: generateId(this.byId),
-			parentId,
+			parentId: this.leafId,
 			timestamp: new Date().toISOString(),
 			message,
 		};
-		const advancedLeaf = this._shouldAdvanceLeaf(options);
-		this._appendEntry(entry, advancedLeaf);
-		return { id: entry.id, advancedLeaf };
+		this._appendEntry(entry);
+		return entry.id;
 	}
 
 	/** Append a thinking level change as child of current leaf, then advance leaf. Returns entry id. */
@@ -1160,27 +1078,10 @@ export class SessionManager {
 		details?: T,
 		fromHook?: boolean,
 	): string {
-		const parentId = this.leafId;
-		return this[appendCompactionAtKey](summary, firstKeptEntryId, tokensBefore, details, fromHook, parentId, {
-			advanceLeafIfCurrent: parentId,
-		}).id;
-	}
-
-	/** Append a compaction entry under an explicit parent. */
-	[appendCompactionAtKey]<T = unknown>(
-		summary: string,
-		firstKeptEntryId: string,
-		tokensBefore: number,
-		details: T | undefined,
-		fromHook: boolean | undefined,
-		parentId: string | null,
-		options: AppendAtOptions = {},
-	): AppendAtResult {
-		this._validateAppendParent(parentId);
 		const entry: CompactionEntry<T> = {
 			type: "compaction",
 			id: generateId(this.byId),
-			parentId,
+			parentId: this.leafId,
 			timestamp: new Date().toISOString(),
 			summary,
 			firstKeptEntryId,
@@ -1188,9 +1089,8 @@ export class SessionManager {
 			details,
 			fromHook,
 		};
-		const advancedLeaf = this._shouldAdvanceLeaf(options);
-		this._appendEntry(entry, advancedLeaf);
-		return { id: entry.id, advancedLeaf };
+		this._appendEntry(entry);
+		return entry.id;
 	}
 
 	/** Append a custom entry (for extensions) as child of current leaf, then advance leaf. Returns entry id. */
@@ -1249,22 +1149,6 @@ export class SessionManager {
 		display: boolean,
 		details?: T,
 	): string {
-		const parentId = this.leafId;
-		return this[appendCustomMessageEntryAtKey](customType, content, display, details, parentId, {
-			advanceLeafIfCurrent: parentId,
-		}).id;
-	}
-
-	/** Append a context-bearing custom message under an explicit parent. */
-	[appendCustomMessageEntryAtKey]<T = unknown>(
-		customType: string,
-		content: string | (TextContent | ImageContent)[],
-		display: boolean,
-		details: T | undefined,
-		parentId: string | null,
-		options: AppendAtOptions = {},
-	): AppendAtResult {
-		this._validateAppendParent(parentId);
 		const entry: CustomMessageEntry<T> = {
 			type: "custom_message",
 			customType,
@@ -1272,12 +1156,11 @@ export class SessionManager {
 			display,
 			details,
 			id: generateId(this.byId),
-			parentId,
+			parentId: this.leafId,
 			timestamp: new Date().toISOString(),
 		};
-		const advancedLeaf = this._shouldAdvanceLeaf(options);
-		this._appendEntry(entry, advancedLeaf);
-		return { id: entry.id, advancedLeaf };
+		this._appendEntry(entry);
+		return entry.id;
 	}
 
 	// =========================================================================

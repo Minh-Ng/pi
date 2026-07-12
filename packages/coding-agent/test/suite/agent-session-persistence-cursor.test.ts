@@ -5,9 +5,7 @@ import type { AgentMessage, AgentTool } from "@earendil-works/pi-agent-core";
 import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { afterEach, describe, expect, it } from "vitest";
-import { convertToLlm } from "../../src/core/messages.ts";
 import { buildSessionContext, SessionManager } from "../../src/core/session-manager.ts";
-import { validateToolMessageSequence } from "../../src/core/tool-message-validation.ts";
 import { createHarness, getMessageText, type Harness } from "./harness.ts";
 
 function messageEntries(sessionManager: SessionManager) {
@@ -16,6 +14,20 @@ function messageEntries(sessionManager: SessionManager) {
 
 function contextAt(sessionManager: SessionManager, leafId: string): AgentMessage[] {
 	return buildSessionContext(sessionManager.getEntries(), leafId).messages;
+}
+
+function expectValidToolPairing(messages: AgentMessage[]): void {
+	const pendingToolCalls = new Set<string>();
+	for (const message of messages) {
+		if (message.role === "assistant") {
+			for (const part of message.content) {
+				if (part.type === "toolCall") pendingToolCalls.add(part.id);
+			}
+		} else if (message.role === "toolResult") {
+			expect(pendingToolCalls.delete(message.toolCallId)).toBe(true);
+		}
+	}
+	expect(pendingToolCalls.size).toBe(0);
 }
 
 describe("AgentSession per-run persistence cursor", () => {
@@ -104,7 +116,7 @@ describe("AgentSession per-run persistence cursor", () => {
 		);
 		expect(backgroundLeaf?.parentId).toBe(finalAssistant!.id);
 		const runContext = contextAt(sessionManager, backgroundLeaf!.id);
-		validateToolMessageSequence(convertToLlm(runContext));
+		expectValidToolPairing(runContext);
 		expect(
 			runContext.filter((message) => message.role === "toolResult").map((message) => message.toolCallId),
 		).toEqual([fastCall.id, slowCall.id]);
@@ -114,7 +126,7 @@ describe("AgentSession per-run persistence cursor", () => {
 		expect(sessionFile).toBeDefined();
 		const reopened = SessionManager.open(sessionFile!, sessionDir, tempDir);
 		expect(reopened.getLeafId()).toBe(seedAssistant!.id);
-		validateToolMessageSequence(convertToLlm(contextAt(reopened, backgroundLeaf!.id)));
+		expectValidToolPairing(contextAt(reopened, backgroundLeaf!.id));
 	});
 
 	it("keeps cancellation results on the run branch without reclaiming the selected leaf", async () => {
@@ -160,36 +172,6 @@ describe("AgentSession per-run persistence cursor", () => {
 		expect(sessionManager.getLeafId()).toBe(seedAssistant!.id);
 		const backgroundLeaf = messageEntries(sessionManager).at(-1);
 		expect(backgroundLeaf).toBeDefined();
-		validateToolMessageSequence(convertToLlm(contextAt(sessionManager, backgroundLeaf!.id)));
-	});
-
-	it("turns malformed persisted tool context into a local error and allows tree recovery", async () => {
-		const sessionManager = SessionManager.inMemory();
-		sessionManager.appendMessage({ role: "user", content: "seed", timestamp: 1 });
-		const seedAssistantId = sessionManager.appendMessage(fauxAssistantMessage("seed reply"));
-		const malformedUserId = sessionManager.appendMessage({ role: "user", content: "bad turn", timestamp: 2 });
-		const missingCall = fauxToolCall("missing", {});
-		sessionManager.appendMessage(fauxAssistantMessage(missingCall, { stopReason: "toolUse" }));
-		const harness = await createHarness({ sessionManager });
-		harnesses.push(harness);
-		harness.session.agent.state.messages = sessionManager.buildSessionContext().messages;
-		harness.setResponses([fauxAssistantMessage("recovered")]);
-
-		await harness.session.prompt("trigger local validation");
-
-		expect(harness.getPendingResponseCount()).toBe(1);
-		expect(harness.session.state.errorMessage).toMatch(/Invalid tool message sequence.*\/tree/);
-		const failedAssistant = harness.session.messages.at(-1);
-		expect(failedAssistant?.role).toBe("assistant");
-		if (failedAssistant?.role === "assistant") {
-			expect(failedAssistant.stopReason).toBe("error");
-		}
-
-		const navigation = await harness.session.navigateTree(malformedUserId, { summarize: false });
-		expect(navigation.cancelled).toBe(false);
-		expect(sessionManager.getLeafId()).toBe(seedAssistantId);
-		await harness.session.prompt("recover on valid branch");
-		expect(harness.getPendingResponseCount()).toBe(0);
-		expect(getMessageText(harness.session.messages.at(-1))).toBe("recovered");
+		expectValidToolPairing(contextAt(sessionManager, backgroundLeaf!.id));
 	});
 });

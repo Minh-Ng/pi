@@ -86,18 +86,8 @@ import type { BashExecutionMessage, CustomMessage } from "./messages.ts";
 import type { ModelRegistry } from "./model-registry.ts";
 import { expandPromptTemplate, type PromptTemplate } from "./prompt-templates.ts";
 import type { ResourceExtensionPaths, ResourceLoader } from "./resource-loader.ts";
-import type {
-	AppendAtOptions,
-	AppendAtResult,
-	BranchSummaryEntry,
-	CompactionEntry,
-	SessionEntry,
-	SessionManager,
-} from "./session-manager.ts";
+import type { BranchSummaryEntry, CompactionEntry, SessionEntry, SessionManager } from "./session-manager.ts";
 import {
-	appendCompactionAt,
-	appendCustomMessageEntryAt,
-	appendMessageAt,
 	buildSessionContext,
 	CURRENT_SESSION_VERSION,
 	getLatestCompactionEntry,
@@ -107,7 +97,6 @@ import type { SettingsManager } from "./settings-manager.ts";
 import type { SlashCommandInfo } from "./slash-commands.ts";
 import { createSyntheticSourceInfo, type SourceInfo } from "./source-info.ts";
 import { type BuildSystemPromptOptions, buildSystemPrompt } from "./system-prompt.ts";
-import { validateToolMessageSequence } from "./tool-message-validation.ts";
 import { type BashOperations, createLocalBashOperations } from "./tools/bash.ts";
 import { createAllToolDefinitions } from "./tools/index.ts";
 import { createToolDefinitionFromAgentTool } from "./tools/tool-definition-wrapper.ts";
@@ -381,7 +370,6 @@ export class AgentSession {
 		// (session persistence, extensions, auto-compaction, retry logic)
 		this._unsubscribeAgent = this.agent.subscribe(this._handleAgentEvent);
 		this._installAgentToolHooks();
-		this._installProviderContextValidation();
 		this._installAgentNextTurnRefresh();
 
 		this._buildRuntime({
@@ -490,15 +478,6 @@ export class AgentSession {
 				details: hookResult.details,
 				isError: hookResult.isError ?? isError,
 			};
-		};
-	}
-
-	private _installProviderContextValidation(): void {
-		const previousConvertToLlm = this.agent.convertToLlm;
-		this.agent.convertToLlm = async (messages) => {
-			const providerMessages = await previousConvertToLlm(messages);
-			validateToolMessageSequence(providerMessages);
-			return providerMessages;
 		};
 	}
 
@@ -641,9 +620,7 @@ export class AgentSession {
 		}
 	};
 
-	private _prepareRunPersistenceAppend():
-		| { run: RunPersistenceState; parentId: string | null; options: AppendAtOptions }
-		| undefined {
+	private _prepareRunPersistenceAppend(): { run: RunPersistenceState; parentId: string | null } | undefined {
 		const run = this._runPersistenceState;
 		if (!run) return undefined;
 
@@ -657,14 +634,43 @@ export class AgentSession {
 			}
 		}
 
-		return {
-			run,
-			parentId: run.cursor,
-			options: run.ownsVisibleLeaf ? { advanceLeafIfCurrent: run.cursor } : {},
-		};
+		return { run, parentId: run.cursor };
 	}
 
-	private _completeRunPersistenceAppend(run: RunPersistenceState, result: AppendAtResult): void {
+	private _appendAtRunCursor(parentId: string | null, advanceLeaf: boolean, append: () => string): string {
+		const visibleLeafId = this.sessionManager.getLeafId();
+		if (visibleLeafId !== parentId) {
+			if (parentId === null) this.sessionManager.resetLeaf();
+			else this.sessionManager.branch(parentId);
+		}
+
+		let entryId = "";
+		let appendFailure: { error: unknown } | undefined;
+		try {
+			entryId = append();
+		} catch (error) {
+			appendFailure = { error };
+		}
+
+		let restoreFailure: { error: unknown } | undefined;
+		if (!advanceLeaf) {
+			try {
+				if (visibleLeafId === null) this.sessionManager.resetLeaf();
+				else this.sessionManager.branch(visibleLeafId);
+			} catch (error) {
+				restoreFailure = { error };
+			}
+		}
+
+		if (appendFailure) throw appendFailure.error;
+		if (restoreFailure) throw restoreFailure.error;
+		return entryId;
+	}
+
+	private _completeRunPersistenceAppend(
+		run: RunPersistenceState,
+		result: { id: string; advancedLeaf: boolean },
+	): void {
 		run.cursor = result.id;
 		if (run.ownsVisibleLeaf && !result.advancedLeaf) {
 			run.ownsVisibleLeaf = false;
@@ -704,18 +710,18 @@ export class AgentSession {
 			return;
 		}
 
-		const result =
+		const advancedLeaf = append.run.ownsVisibleLeaf;
+		const id = this._appendAtRunCursor(append.parentId, advancedLeaf, () =>
 			message.role === "custom"
-				? appendCustomMessageEntryAt(
-						this.sessionManager,
+				? this.sessionManager.appendCustomMessageEntry(
 						message.customType,
 						message.content,
 						message.display,
 						message.details,
-						append.parentId,
-						append.options,
 					)
-				: appendMessageAt(this.sessionManager, message, append.parentId, append.options);
+				: this.sessionManager.appendMessage(message),
+		);
+		const result = { id, advancedLeaf };
 		this._completeRunPersistenceAppend(append.run, result);
 	}
 
@@ -730,16 +736,11 @@ export class AgentSession {
 		if (!append) {
 			return this.sessionManager.appendCompaction(summary, firstKeptEntryId, tokensBefore, details, fromExtension);
 		}
-		const result = appendCompactionAt(
-			this.sessionManager,
-			summary,
-			firstKeptEntryId,
-			tokensBefore,
-			details,
-			fromExtension,
-			append.parentId,
-			append.options,
+		const advancedLeaf = append.run.ownsVisibleLeaf;
+		const id = this._appendAtRunCursor(append.parentId, advancedLeaf, () =>
+			this.sessionManager.appendCompaction(summary, firstKeptEntryId, tokensBefore, details, fromExtension),
 		);
+		const result = { id, advancedLeaf };
 		this._completeRunPersistenceAppend(append.run, result);
 		return result.id;
 	}
