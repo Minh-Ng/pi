@@ -186,6 +186,52 @@ export interface AppendAtResult {
 	advancedLeaf: boolean;
 }
 
+const appendMessageAtKey = Symbol("SessionManager.appendMessageAt");
+const appendCompactionAtKey = Symbol("SessionManager.appendCompactionAt");
+const appendCustomMessageEntryAtKey = Symbol("SessionManager.appendCustomMessageEntryAt");
+
+export function appendMessageAt(
+	sessionManager: SessionManager,
+	message: Message | CustomMessage | BashExecutionMessage,
+	parentId: string | null,
+	options: AppendAtOptions = {},
+): AppendAtResult {
+	return sessionManager[appendMessageAtKey](message, parentId, options);
+}
+
+export function appendCompactionAt<T = unknown>(
+	sessionManager: SessionManager,
+	summary: string,
+	firstKeptEntryId: string,
+	tokensBefore: number,
+	details: T | undefined,
+	fromHook: boolean | undefined,
+	parentId: string | null,
+	options: AppendAtOptions = {},
+): AppendAtResult {
+	return sessionManager[appendCompactionAtKey](
+		summary,
+		firstKeptEntryId,
+		tokensBefore,
+		details,
+		fromHook,
+		parentId,
+		options,
+	);
+}
+
+export function appendCustomMessageEntryAt<T = unknown>(
+	sessionManager: SessionManager,
+	customType: string,
+	content: string | (TextContent | ImageContent)[],
+	display: boolean,
+	details: T | undefined,
+	parentId: string | null,
+	options: AppendAtOptions = {},
+): AppendAtResult {
+	return sessionManager[appendCustomMessageEntryAtKey](customType, content, display, details, parentId, options);
+}
+
 export interface SessionInfo {
 	path: string;
 	id: string;
@@ -1054,14 +1100,14 @@ export class SessionManager {
 	 */
 	appendMessage(message: Message | CustomMessage | BashExecutionMessage): string {
 		const parentId = this.leafId;
-		return this.appendMessageAt(message, parentId, { advanceLeafIfCurrent: parentId }).id;
+		return this[appendMessageAtKey](message, parentId, { advanceLeafIfCurrent: parentId }).id;
 	}
 
 	/**
 	 * Append a message under an explicit parent. The visible leaf advances only when
 	 * advanceLeafIfCurrent matches, allowing background runs to persist without stealing selection.
 	 */
-	appendMessageAt(
+	[appendMessageAtKey](
 		message: Message | CustomMessage | BashExecutionMessage,
 		parentId: string | null,
 		options: AppendAtOptions = {},
@@ -1115,13 +1161,13 @@ export class SessionManager {
 		fromHook?: boolean,
 	): string {
 		const parentId = this.leafId;
-		return this.appendCompactionAt(summary, firstKeptEntryId, tokensBefore, details, fromHook, parentId, {
+		return this[appendCompactionAtKey](summary, firstKeptEntryId, tokensBefore, details, fromHook, parentId, {
 			advanceLeafIfCurrent: parentId,
 		}).id;
 	}
 
 	/** Append a compaction entry under an explicit parent. */
-	appendCompactionAt<T = unknown>(
+	[appendCompactionAtKey]<T = unknown>(
 		summary: string,
 		firstKeptEntryId: string,
 		tokensBefore: number,
@@ -1204,13 +1250,13 @@ export class SessionManager {
 		details?: T,
 	): string {
 		const parentId = this.leafId;
-		return this.appendCustomMessageEntryAt(customType, content, display, details, parentId, {
+		return this[appendCustomMessageEntryAtKey](customType, content, display, details, parentId, {
 			advanceLeafIfCurrent: parentId,
 		}).id;
 	}
 
 	/** Append a context-bearing custom message under an explicit parent. */
-	appendCustomMessageEntryAt<T = unknown>(
+	[appendCustomMessageEntryAtKey]<T = unknown>(
 		customType: string,
 		content: string | (TextContent | ImageContent)[],
 		display: boolean,

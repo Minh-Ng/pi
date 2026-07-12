@@ -95,6 +95,9 @@ import type {
 	SessionManager,
 } from "./session-manager.ts";
 import {
+	appendCompactionAt,
+	appendCustomMessageEntryAt,
+	appendMessageAt,
 	buildSessionContext,
 	CURRENT_SESSION_VERSION,
 	getLatestCompactionEntry,
@@ -703,7 +706,8 @@ export class AgentSession {
 
 		const result =
 			message.role === "custom"
-				? this.sessionManager.appendCustomMessageEntryAt(
+				? appendCustomMessageEntryAt(
+						this.sessionManager,
 						message.customType,
 						message.content,
 						message.display,
@@ -711,7 +715,7 @@ export class AgentSession {
 						append.parentId,
 						append.options,
 					)
-				: this.sessionManager.appendMessageAt(message, append.parentId, append.options);
+				: appendMessageAt(this.sessionManager, message, append.parentId, append.options);
 		this._completeRunPersistenceAppend(append.run, result);
 	}
 
@@ -726,7 +730,8 @@ export class AgentSession {
 		if (!append) {
 			return this.sessionManager.appendCompaction(summary, firstKeptEntryId, tokensBefore, details, fromExtension);
 		}
-		const result = this.sessionManager.appendCompactionAt(
+		const result = appendCompactionAt(
+			this.sessionManager,
 			summary,
 			firstKeptEntryId,
 			tokensBefore,
