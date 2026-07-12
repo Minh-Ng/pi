@@ -86,12 +86,25 @@ import type { BashExecutionMessage, CustomMessage } from "./messages.ts";
 import type { ModelRegistry } from "./model-registry.ts";
 import { expandPromptTemplate, type PromptTemplate } from "./prompt-templates.ts";
 import type { ResourceExtensionPaths, ResourceLoader } from "./resource-loader.ts";
-import type { BranchSummaryEntry, CompactionEntry, SessionEntry, SessionManager } from "./session-manager.ts";
-import { CURRENT_SESSION_VERSION, getLatestCompactionEntry, type SessionHeader } from "./session-manager.ts";
+import type {
+	AppendAtOptions,
+	AppendAtResult,
+	BranchSummaryEntry,
+	CompactionEntry,
+	SessionEntry,
+	SessionManager,
+} from "./session-manager.ts";
+import {
+	buildSessionContext,
+	CURRENT_SESSION_VERSION,
+	getLatestCompactionEntry,
+	type SessionHeader,
+} from "./session-manager.ts";
 import type { SettingsManager } from "./settings-manager.ts";
 import type { SlashCommandInfo } from "./slash-commands.ts";
 import { createSyntheticSourceInfo, type SourceInfo } from "./source-info.ts";
 import { type BuildSystemPromptOptions, buildSystemPrompt } from "./system-prompt.ts";
+import { validateToolMessageSequence } from "./tool-message-validation.ts";
 import { type BashOperations, createLocalBashOperations } from "./tools/bash.ts";
 import { createAllToolDefinitions } from "./tools/index.ts";
 import { createToolDefinitionFromAgentTool } from "./tools/tool-definition-wrapper.ts";
@@ -247,6 +260,11 @@ interface ToolDefinitionEntry {
 	sourceInfo: SourceInfo;
 }
 
+interface RunPersistenceState {
+	cursor: string | null;
+	ownsVisibleLeaf: boolean;
+}
+
 function estimateMessagesTokens(messages: AgentMessage[]): number {
 	let tokens = 0;
 	for (const message of messages) {
@@ -277,6 +295,7 @@ export class AgentSession {
 	private _unsubscribeAgent?: () => void;
 	private _eventListeners: AgentSessionEventListener[] = [];
 	private _isAgentRunActive = false;
+	private _runPersistenceState: RunPersistenceState | undefined;
 	private _idleWaitPromise: Promise<void> | undefined;
 	private _resolveIdleWait: (() => void) | undefined;
 
@@ -359,6 +378,7 @@ export class AgentSession {
 		// (session persistence, extensions, auto-compaction, retry logic)
 		this._unsubscribeAgent = this.agent.subscribe(this._handleAgentEvent);
 		this._installAgentToolHooks();
+		this._installAgentContextValidation();
 		this._installAgentNextTurnRefresh();
 
 		this._buildRuntime({
@@ -470,6 +490,17 @@ export class AgentSession {
 		};
 	}
 
+	private _installAgentContextValidation(): void {
+		const previousTransformContext = this.agent.transformContext;
+		this.agent.transformContext = async (messages, signal) => {
+			const transformedMessages = previousTransformContext
+				? await previousTransformContext(messages, signal)
+				: messages;
+			validateToolMessageSequence(transformedMessages);
+			return transformedMessages;
+		};
+	}
+
 	private _installAgentNextTurnRefresh(): void {
 		const previousPrepareNextTurnWithContext =
 			this.agent.prepareNextTurnWithContext ??
@@ -576,22 +607,13 @@ export class AgentSession {
 
 		// Handle session persistence
 		if (event.type === "message_end") {
-			// Check if this is a custom message from extensions
-			if (event.message.role === "custom") {
-				// Persist as CustomMessageEntry
-				this.sessionManager.appendCustomMessageEntry(
-					event.message.customType,
-					event.message.content,
-					event.message.display,
-					event.message.details,
-				);
-			} else if (
+			if (
+				event.message.role === "custom" ||
 				event.message.role === "user" ||
 				event.message.role === "assistant" ||
 				event.message.role === "toolResult"
 			) {
-				// Regular LLM message - persist as SessionMessageEntry
-				this.sessionManager.appendMessage(event.message);
+				this._persistAgentMessage(event.message);
 			}
 			// Other message types (bashExecution, compactionSummary, branchSummary) are persisted elsewhere
 
@@ -617,6 +639,107 @@ export class AgentSession {
 			}
 		}
 	};
+
+	private _prepareRunPersistenceAppend():
+		| { run: RunPersistenceState; parentId: string | null; options: AppendAtOptions }
+		| undefined {
+		const run = this._runPersistenceState;
+		if (!run) return undefined;
+
+		if (run.ownsVisibleLeaf && this.sessionManager.getLeafId() !== run.cursor) {
+			const visibleLeafId = this.sessionManager.getLeafId();
+			const visibleBranch = visibleLeafId ? this.sessionManager.getBranch(visibleLeafId) : [];
+			if (run.cursor === null || visibleBranch.some((entry) => entry.id === run.cursor)) {
+				run.cursor = visibleLeafId;
+			} else {
+				run.ownsVisibleLeaf = false;
+			}
+		}
+
+		return {
+			run,
+			parentId: run.cursor,
+			options: run.ownsVisibleLeaf ? { advanceLeafIfCurrent: run.cursor } : {},
+		};
+	}
+
+	private _completeRunPersistenceAppend(run: RunPersistenceState, result: AppendAtResult): void {
+		run.cursor = result.id;
+		if (run.ownsVisibleLeaf && !result.advancedLeaf) {
+			run.ownsVisibleLeaf = false;
+		}
+	}
+
+	private _getRunPersistenceBranch(): SessionEntry[] {
+		const append = this._prepareRunPersistenceAppend();
+		if (!append) return this.sessionManager.getBranch();
+		if (append.parentId === null) return [];
+		return this.sessionManager.getBranch(append.parentId);
+	}
+
+	private _persistAgentMessage(message: AgentMessage): void {
+		if (
+			message.role !== "custom" &&
+			message.role !== "user" &&
+			message.role !== "assistant" &&
+			message.role !== "toolResult" &&
+			message.role !== "bashExecution"
+		) {
+			return;
+		}
+
+		const append = this._prepareRunPersistenceAppend();
+		if (!append) {
+			if (message.role === "custom") {
+				this.sessionManager.appendCustomMessageEntry(
+					message.customType,
+					message.content,
+					message.display,
+					message.details,
+				);
+			} else {
+				this.sessionManager.appendMessage(message);
+			}
+			return;
+		}
+
+		const result =
+			message.role === "custom"
+				? this.sessionManager.appendCustomMessageEntryAt(
+						message.customType,
+						message.content,
+						message.display,
+						message.details,
+						append.parentId,
+						append.options,
+					)
+				: this.sessionManager.appendMessageAt(message, append.parentId, append.options);
+		this._completeRunPersistenceAppend(append.run, result);
+	}
+
+	private _appendRunCompaction(
+		summary: string,
+		firstKeptEntryId: string,
+		tokensBefore: number,
+		details: unknown,
+		fromExtension: boolean,
+	): string {
+		const append = this._prepareRunPersistenceAppend();
+		if (!append) {
+			return this.sessionManager.appendCompaction(summary, firstKeptEntryId, tokensBefore, details, fromExtension);
+		}
+		const result = this.sessionManager.appendCompactionAt(
+			summary,
+			firstKeptEntryId,
+			tokensBefore,
+			details,
+			fromExtension,
+			append.parentId,
+			append.options,
+		);
+		this._completeRunPersistenceAppend(append.run, result);
+		return result.id;
+	}
 
 	private _willRetryAfterAgentEnd(event: Extract<AgentEvent, { type: "agent_end" }>): boolean {
 		const settings = this.settingsManager.getRetrySettings();
@@ -1021,6 +1144,10 @@ export class AgentSession {
 	// =========================================================================
 
 	private async _runAgentPrompt(messages: AgentMessage | AgentMessage[]): Promise<void> {
+		this._runPersistenceState = {
+			cursor: this.sessionManager.getLeafId(),
+			ownsVisibleLeaf: true,
+		};
 		this._isAgentRunActive = true;
 		try {
 			await this.agent.prompt(messages);
@@ -1030,6 +1157,7 @@ export class AgentSession {
 		} finally {
 			this._systemPromptOverride = undefined;
 			this._flushPendingBashMessages();
+			this._runPersistenceState = undefined;
 			await this._emitAgentSettled();
 		}
 	}
@@ -1916,7 +2044,7 @@ export class AgentSession {
 		// Skip compaction checks if this assistant message is older than the latest
 		// compaction boundary. This prevents a stale pre-compaction usage/error
 		// from retriggering compaction on the first prompt after compaction.
-		const compactionEntry = getLatestCompactionEntry(this.sessionManager.getBranch());
+		const compactionEntry = getLatestCompactionEntry(this._getRunPersistenceBranch());
 		const assistantIsFromBeforeCompaction =
 			compactionEntry !== null && assistantMessage.timestamp <= new Date(compactionEntry.timestamp).getTime();
 		if (assistantIsFromBeforeCompaction) {
@@ -2015,7 +2143,7 @@ export class AgentSession {
 				({ apiKey, headers, env } = await this._getCompactionRequestAuth(this.model));
 			}
 
-			const pathEntries = this.sessionManager.getBranch();
+			const pathEntries = this._getRunPersistenceBranch();
 
 			const preparation = prepareCompaction(pathEntries, settings);
 			if (!preparation) {
@@ -2098,16 +2226,20 @@ export class AgentSession {
 				return false;
 			}
 
-			this.sessionManager.appendCompaction(summary, firstKeptEntryId, tokensBefore, details, fromExtension);
+			const compactionEntryId = this._appendRunCompaction(
+				summary,
+				firstKeptEntryId,
+				tokensBefore,
+				details,
+				fromExtension,
+			);
 			const newEntries = this.sessionManager.getEntries();
-			const sessionContext = this.sessionManager.buildSessionContext();
+			const sessionContext = buildSessionContext(newEntries, compactionEntryId);
 			this.agent.state.messages = sessionContext.messages;
 			const estimatedTokensAfter = estimateMessagesTokens(sessionContext.messages);
 
 			// Get the saved compaction entry for the extension event
-			const savedCompactionEntry = newEntries.find((e) => e.type === "compaction" && e.summary === summary) as
-				| CompactionEntry
-				| undefined;
+			const savedCompactionEntry = this.sessionManager.getEntry(compactionEntryId) as CompactionEntry | undefined;
 
 			if (this._extensionRunner && savedCompactionEntry) {
 				await this._extensionRunner.emit({
@@ -2728,7 +2860,7 @@ export class AgentSession {
 			this.agent.state.messages.push(bashMessage);
 
 			// Save to session
-			this.sessionManager.appendMessage(bashMessage);
+			this._persistAgentMessage(bashMessage);
 		}
 	}
 
@@ -2760,8 +2892,8 @@ export class AgentSession {
 			// Add to agent state
 			this.agent.state.messages.push(bashMessage);
 
-			// Save to session
-			this.sessionManager.appendMessage(bashMessage);
+			// Save to the active run branch without reclaiming a separately selected leaf.
+			this._persistAgentMessage(bashMessage);
 		}
 
 		this._pendingBashMessages = [];

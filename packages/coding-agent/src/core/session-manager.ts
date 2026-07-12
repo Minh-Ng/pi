@@ -27,7 +27,7 @@ import {
 	createCustomMessage,
 } from "./messages.ts";
 
-export const CURRENT_SESSION_VERSION = 3;
+export const CURRENT_SESSION_VERSION = 4;
 
 export interface SessionHeader {
 	type: "session";
@@ -36,6 +36,13 @@ export interface SessionHeader {
 	timestamp: string;
 	cwd: string;
 	parentSession?: string;
+}
+
+/** Internal append-only marker that preserves the selected leaf across background writes and reloads. */
+export interface SessionLeafEntry {
+	type: "session_leaf";
+	leafId: string | null;
+	timestamp: string;
 }
 
 export interface NewSessionOptions {
@@ -148,8 +155,8 @@ export type SessionEntry =
 	| LabelEntry
 	| SessionInfoEntry;
 
-/** Raw file entry (includes header) */
-export type FileEntry = SessionHeader | SessionEntry;
+/** Raw file entry (includes header and internal leaf-selection markers) */
+export type FileEntry = SessionHeader | SessionLeafEntry | SessionEntry;
 
 /** Tree node for getTree() - defensive copy of session structure */
 export interface SessionTreeNode {
@@ -165,6 +172,16 @@ export interface SessionContext {
 	messages: AgentMessage[];
 	thinkingLevel: string;
 	model: { provider: string; modelId: string } | null;
+}
+
+export interface AppendAtOptions {
+	/** Advance the visible leaf only when it still equals this expected entry. Omit to append in the background. */
+	advanceLeafIfCurrent?: string | null;
+}
+
+export interface AppendAtResult {
+	id: string;
+	advancedLeaf: boolean;
 }
 
 export interface SessionInfo {
@@ -233,6 +250,7 @@ function migrateV1ToV2(entries: FileEntry[]): void {
 			entry.version = 2;
 			continue;
 		}
+		if (entry.type === "session_leaf") continue;
 
 		entry.id = generateId(ids);
 		entry.parentId = prevId;
@@ -243,7 +261,7 @@ function migrateV1ToV2(entries: FileEntry[]): void {
 			const comp = entry as CompactionEntry & { firstKeptEntryIndex?: number };
 			if (typeof comp.firstKeptEntryIndex === "number") {
 				const targetEntry = entries[comp.firstKeptEntryIndex];
-				if (targetEntry && targetEntry.type !== "session") {
+				if (targetEntry && targetEntry.type !== "session" && targetEntry.type !== "session_leaf") {
 					comp.firstKeptEntryId = targetEntry.id;
 				}
 				delete comp.firstKeptEntryIndex;
@@ -270,6 +288,16 @@ function migrateV2ToV3(entries: FileEntry[]): void {
 	}
 }
 
+/** Migrate v3 → v4: leaf-selection markers are append-only and require only a header version bump. */
+function migrateV3ToV4(entries: FileEntry[]): void {
+	for (const entry of entries) {
+		if (entry.type === "session") {
+			entry.version = 4;
+			return;
+		}
+	}
+}
+
 /**
  * Run all necessary migrations to bring entries to current version.
  * Mutates entries in place. Returns true if any migration was applied.
@@ -282,6 +310,7 @@ function migrateToCurrentVersion(entries: FileEntry[]): boolean {
 
 	if (version < 2) migrateV1ToV2(entries);
 	if (version < 3) migrateV2ToV3(entries);
+	if (version < 4) migrateV3ToV4(entries);
 
 	return true;
 }
@@ -893,6 +922,12 @@ export class SessionManager {
 		this.leafId = null;
 		for (const entry of this.fileEntries) {
 			if (entry.type === "session") continue;
+			if (entry.type === "session_leaf") {
+				if (entry.leafId === null || this.byId.has(entry.leafId)) {
+					this.leafId = entry.leafId;
+				}
+				continue;
+			}
 			this.byId.set(entry.id, entry);
 			this.leafId = entry.id;
 			if (entry.type === "label") {
@@ -943,7 +978,7 @@ export class SessionManager {
 		return this.sessionFile;
 	}
 
-	_persist(entry: SessionEntry): void {
+	_persist(entry: SessionLeafEntry | SessionEntry): void {
 		if (!this.persist || !this.sessionFile) return;
 
 		const hasAssistant = this.fileEntries.some((e) => e.type === "message" && e.message.role === "assistant");
@@ -972,11 +1007,37 @@ export class SessionManager {
 		}
 	}
 
-	private _appendEntry(entry: SessionEntry): void {
+	private _appendLeafSelection(): void {
+		if (!this.persist) return;
+		const entry: SessionLeafEntry = {
+			type: "session_leaf",
+			leafId: this.leafId,
+			timestamp: new Date().toISOString(),
+		};
+		this.fileEntries.push(entry);
+		this._persist(entry);
+	}
+
+	private _appendEntry(entry: SessionEntry, advanceLeaf = true): void {
 		this.fileEntries.push(entry);
 		this.byId.set(entry.id, entry);
-		this.leafId = entry.id;
+		if (advanceLeaf) {
+			this.leafId = entry.id;
+		}
 		this._persist(entry);
+		if (!advanceLeaf) {
+			this._appendLeafSelection();
+		}
+	}
+
+	private _validateAppendParent(parentId: string | null): void {
+		if (parentId !== null && !this.byId.has(parentId)) {
+			throw new Error(`Entry ${parentId} not found`);
+		}
+	}
+
+	private _shouldAdvanceLeaf(options: AppendAtOptions): boolean {
+		return "advanceLeafIfCurrent" in options && this.leafId === options.advanceLeafIfCurrent;
 	}
 
 	/** Append a message as child of current leaf, then advance leaf. Returns entry id.
@@ -986,15 +1047,30 @@ export class SessionManager {
 	 * These need to be appended via appendCompaction() and appendBranchSummary() methods.
 	 */
 	appendMessage(message: Message | CustomMessage | BashExecutionMessage): string {
+		const parentId = this.leafId;
+		return this.appendMessageAt(message, parentId, { advanceLeafIfCurrent: parentId }).id;
+	}
+
+	/**
+	 * Append a message under an explicit parent. The visible leaf advances only when
+	 * advanceLeafIfCurrent matches, allowing background runs to persist without stealing selection.
+	 */
+	appendMessageAt(
+		message: Message | CustomMessage | BashExecutionMessage,
+		parentId: string | null,
+		options: AppendAtOptions = {},
+	): AppendAtResult {
+		this._validateAppendParent(parentId);
 		const entry: SessionMessageEntry = {
 			type: "message",
 			id: generateId(this.byId),
-			parentId: this.leafId,
+			parentId,
 			timestamp: new Date().toISOString(),
 			message,
 		};
-		this._appendEntry(entry);
-		return entry.id;
+		const advancedLeaf = this._shouldAdvanceLeaf(options);
+		this._appendEntry(entry, advancedLeaf);
+		return { id: entry.id, advancedLeaf };
 	}
 
 	/** Append a thinking level change as child of current leaf, then advance leaf. Returns entry id. */
@@ -1032,10 +1108,27 @@ export class SessionManager {
 		details?: T,
 		fromHook?: boolean,
 	): string {
+		const parentId = this.leafId;
+		return this.appendCompactionAt(summary, firstKeptEntryId, tokensBefore, details, fromHook, parentId, {
+			advanceLeafIfCurrent: parentId,
+		}).id;
+	}
+
+	/** Append a compaction entry under an explicit parent. */
+	appendCompactionAt<T = unknown>(
+		summary: string,
+		firstKeptEntryId: string,
+		tokensBefore: number,
+		details: T | undefined,
+		fromHook: boolean | undefined,
+		parentId: string | null,
+		options: AppendAtOptions = {},
+	): AppendAtResult {
+		this._validateAppendParent(parentId);
 		const entry: CompactionEntry<T> = {
 			type: "compaction",
 			id: generateId(this.byId),
-			parentId: this.leafId,
+			parentId,
 			timestamp: new Date().toISOString(),
 			summary,
 			firstKeptEntryId,
@@ -1043,8 +1136,9 @@ export class SessionManager {
 			details,
 			fromHook,
 		};
-		this._appendEntry(entry);
-		return entry.id;
+		const advancedLeaf = this._shouldAdvanceLeaf(options);
+		this._appendEntry(entry, advancedLeaf);
+		return { id: entry.id, advancedLeaf };
 	}
 
 	/** Append a custom entry (for extensions) as child of current leaf, then advance leaf. Returns entry id. */
@@ -1103,6 +1197,22 @@ export class SessionManager {
 		display: boolean,
 		details?: T,
 	): string {
+		const parentId = this.leafId;
+		return this.appendCustomMessageEntryAt(customType, content, display, details, parentId, {
+			advanceLeafIfCurrent: parentId,
+		}).id;
+	}
+
+	/** Append a context-bearing custom message under an explicit parent. */
+	appendCustomMessageEntryAt<T = unknown>(
+		customType: string,
+		content: string | (TextContent | ImageContent)[],
+		display: boolean,
+		details: T | undefined,
+		parentId: string | null,
+		options: AppendAtOptions = {},
+	): AppendAtResult {
+		this._validateAppendParent(parentId);
 		const entry: CustomMessageEntry<T> = {
 			type: "custom_message",
 			customType,
@@ -1110,11 +1220,12 @@ export class SessionManager {
 			display,
 			details,
 			id: generateId(this.byId),
-			parentId: this.leafId,
+			parentId,
 			timestamp: new Date().toISOString(),
 		};
-		this._appendEntry(entry);
-		return entry.id;
+		const advancedLeaf = this._shouldAdvanceLeaf(options);
+		this._appendEntry(entry, advancedLeaf);
+		return { id: entry.id, advancedLeaf };
 	}
 
 	// =========================================================================
@@ -1228,7 +1339,9 @@ export class SessionManager {
 	 * change the leaf pointer. Entries cannot be modified or deleted.
 	 */
 	getEntries(): SessionEntry[] {
-		return this.fileEntries.filter((e): e is SessionEntry => e.type !== "session");
+		return this.fileEntries.filter(
+			(entry): entry is SessionEntry => entry.type !== "session" && entry.type !== "session_leaf",
+		);
 	}
 
 	/**
@@ -1291,6 +1404,7 @@ export class SessionManager {
 			throw new Error(`Entry ${branchFromId} not found`);
 		}
 		this.leafId = branchFromId;
+		this._appendLeafSelection();
 	}
 
 	/**
@@ -1300,6 +1414,7 @@ export class SessionManager {
 	 */
 	resetLeaf(): void {
 		this.leafId = null;
+		this._appendLeafSelection();
 	}
 
 	/**
