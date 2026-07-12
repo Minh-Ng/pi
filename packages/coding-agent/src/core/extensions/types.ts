@@ -1269,8 +1269,8 @@ export interface ExtensionAPI {
 	): void;
 
 	/**
-	 * Send a user message to the agent and wait for it to be processed.
-	 * When the agent is streaming, use deliverAs to specify how to queue the message.
+	 * Send a user message to the agent.
+	 * Resolves after the turn completes when idle, or after the message is queued when streaming.
 	 */
 	sendUserMessage(
 		content: string | (TextContent | ImageContent)[],

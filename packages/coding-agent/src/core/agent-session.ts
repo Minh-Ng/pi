@@ -2312,17 +2312,7 @@ export class AgentSession {
 						});
 					});
 				},
-				sendUserMessage: (content, options) => {
-					const delivery = this.sendUserMessage(content, options);
-					void delivery.catch((err) => {
-						runner.emitError({
-							extensionPath: "<runtime>",
-							event: "send_user_message",
-							error: err instanceof Error ? err.message : String(err),
-						});
-					});
-					return delivery;
-				},
+				sendUserMessage: (content, options) => this.sendUserMessage(content, options),
 				appendEntry: (customType, data) => {
 					const entryId = this.sessionManager.appendCustomEntry(customType, data);
 					const entry = this.sessionManager.getEntry(entryId);

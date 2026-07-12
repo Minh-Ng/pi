@@ -277,23 +277,28 @@ describe("AgentSession prompt characterization", () => {
 		expect(harness.session.messages.map((message) => message.role)).toEqual(["user", "assistant"]);
 	});
 
-	it("rejects extension user message failures and reports them", async () => {
+	it("rejects extension user message failures and reports awaited handler failures once", async () => {
 		let extensionApi: ExtensionAPI | undefined;
 		const harness = await createHarness({
 			withConfiguredAuth: false,
 			extensionFactories: [
 				(pi) => {
 					extensionApi = pi;
+					pi.on("agent_end", async () => {
+						await pi.sendUserMessage("cannot start");
+					});
 				},
 			],
 		});
 		harnesses.push(harness);
-		const errors: string[] = [];
-		harness.session.extensionRunner.onError((error) => errors.push(error.error));
+		const errorEvents: string[] = [];
+		harness.session.extensionRunner.onError((error) => errorEvents.push(error.event));
 
 		await expect(extensionApi?.sendUserMessage("cannot start")).rejects.toThrow();
+		expect(errorEvents).toEqual([]);
 
-		expect(errors).toHaveLength(1);
+		await harness.session.extensionRunner.emit({ type: "agent_end", messages: [] });
+		expect(errorEvents).toEqual(["agent_end"]);
 		expect(harness.session.messages).toEqual([]);
 	});
 
@@ -318,6 +323,7 @@ describe("AgentSession prompt characterization", () => {
 	});
 
 	it("reports streamingBehavior to input handlers while streaming", async () => {
+		let extensionApi: ExtensionAPI | undefined;
 		let releaseToolExecution: (() => void) | undefined;
 		const toolRelease = new Promise<void>((resolve) => {
 			releaseToolExecution = resolve;
@@ -340,6 +346,7 @@ describe("AgentSession prompt characterization", () => {
 			tools: [waitTool],
 			extensionFactories: [
 				(pi) => {
+					extensionApi = pi;
 					pi.on("input", (event) => {
 						inputEvents.push(event);
 					});
@@ -363,7 +370,7 @@ describe("AgentSession prompt characterization", () => {
 
 		const promptPromise = harness.session.prompt("start");
 		await sawToolStart;
-		await harness.session.prompt("queued", { streamingBehavior: "followUp" });
+		await extensionApi?.sendUserMessage("queued", { deliverAs: "followUp" });
 
 		expect(inputEvents.map((event) => event.streamingBehavior)).toEqual([undefined, "followUp"]);
 
