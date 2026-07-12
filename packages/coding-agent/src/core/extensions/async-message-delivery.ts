@@ -1,6 +1,13 @@
 import type { ImageContent, TextContent } from "@earendil-works/pi-ai/compat";
 import type { ExtensionRuntime } from "./types.ts";
 
+/**
+ * Private bridge for ExtensionAPI.sendUserMessageAsync().
+ *
+ * Keep this handler out of ExtensionRuntime and ExtensionActions: those are existing
+ * public contracts used by extension hosts. AgentSession binds the async operation
+ * after creating the runtime, and the loader delegates the additive API method here.
+ */
 type SendUserMessageAsyncHandler = (
 	content: string | (TextContent | ImageContent)[],
 	options?: { deliverAs?: "steer" | "followUp" },
