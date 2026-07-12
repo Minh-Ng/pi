@@ -39,7 +39,7 @@ describe("AgentSession active-run tree navigation", () => {
 		}
 	});
 
-	it("rejects navigation until a deferred tool run settles without corrupting persisted context", async () => {
+	it("cancels navigation until a deferred tool run settles without corrupting persisted context", async () => {
 		const tempDir = mkdtempSync(join(tmpdir(), "pi-tree-navigation-"));
 		tempDirs.push(tempDir);
 		const sessionDir = join(tempDir, "sessions");
@@ -86,9 +86,7 @@ describe("AgentSession active-run tree navigation", () => {
 
 		try {
 			await expect(harness.session.navigateTree(originatingLeafId!)).resolves.toEqual({ cancelled: false });
-			await expect(harness.session.navigateTree(seedUserEntry!.id)).rejects.toThrow(
-				"Cannot navigate the session tree while an agent run is active",
-			);
+			await expect(harness.session.navigateTree(seedUserEntry!.id)).resolves.toEqual({ cancelled: true });
 			expect(sessionManager.getLeafId()).toBe(originatingLeafId);
 		} finally {
 			releaseToolExecution?.();

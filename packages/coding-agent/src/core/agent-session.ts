@@ -2940,9 +2940,7 @@ export class AgentSession {
 		}
 
 		if (this._isAgentRunActive) {
-			throw new Error(
-				"Cannot navigate the session tree while an agent run is active. Wait for the agent to become idle.",
-			);
+			return { cancelled: true };
 		}
 
 		// Model required for summarization
