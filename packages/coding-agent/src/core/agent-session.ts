@@ -55,6 +55,7 @@ import {
 import { DEFAULT_THINKING_LEVEL } from "./defaults.ts";
 import { exportSessionToHtml, type ToolHtmlRenderer } from "./export-html/index.ts";
 import { createToolHtmlRenderer } from "./export-html/tool-renderer.ts";
+import { bindSendUserMessageAndWait } from "./extensions/api.ts";
 import {
 	type ContextUsage,
 	type ExtensionCommandContextActions,
@@ -2313,15 +2314,13 @@ export class AgentSession {
 					});
 				},
 				sendUserMessage: (content, options) => {
-					const delivery = this.sendUserMessage(content, options);
-					delivery.catch((err) => {
+					this.sendUserMessage(content, options).catch((err) => {
 						runner.emitError({
 							extensionPath: "<runtime>",
 							event: "send_user_message",
 							error: err instanceof Error ? err.message : String(err),
 						});
 					});
-					return delivery;
 				},
 				appendEntry: (customType, data) => {
 					const entryId = this.sessionManager.appendCustomEntry(customType, data);
@@ -2519,6 +2518,11 @@ export class AgentSession {
 				extensionsResult.runtime.flagValues.set(name, value);
 			}
 		}
+
+		bindSendUserMessageAndWait(extensionsResult.runtime, (content, options) => {
+			extensionsResult.runtime.assertActive();
+			return this.sendUserMessage(content, options);
+		});
 
 		this._extensionRunner = new ExtensionRunner(
 			extensionsResult.extensions,

@@ -29,6 +29,7 @@ import type { ExecOptions } from "../exec.ts";
 import { execCommand } from "../exec.ts";
 import { createSyntheticSourceInfo } from "../source-info.ts";
 import { time } from "../timings.ts";
+import { registerAwaitableExtensionAPI } from "./api.ts";
 import type {
 	EntryRenderer,
 	Extension,
@@ -289,9 +290,9 @@ function createExtensionAPI(
 			runtime.sendMessage(message, options);
 		},
 
-		async sendUserMessage(content, options): Promise<void> {
+		sendUserMessage(content, options): void {
 			runtime.assertActive();
-			return runtime.sendUserMessage(content, options);
+			runtime.sendUserMessage(content, options);
 		},
 
 		appendEntry(customType: string, data?: unknown): void {
@@ -367,6 +368,7 @@ function createExtensionAPI(
 		events: eventBus,
 	} as ExtensionAPI;
 
+	registerAwaitableExtensionAPI(api, runtime);
 	return api;
 }
 

@@ -4,7 +4,7 @@ import { join } from "node:path";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { fauxAssistantMessage, fauxToolCall, type Model } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { type ExtensionAPI, type InputEvent, sendUserMessageAndWait } from "../../src/core/extensions/index.ts";
 import type { PromptTemplate } from "../../src/core/prompt-templates.ts";
 import { createSyntheticSourceInfo } from "../../src/core/source-info.ts";
@@ -292,7 +292,7 @@ describe("AgentSession prompt characterization", () => {
 		await expect(sendUserMessageAndWait(extensionApi!, "cannot start")).rejects.toThrow("stale extension");
 	});
 
-	it("rejects extension user message failures and preserves error reporting", async () => {
+	it("rejects awaitable failures and preserves fire-and-forget error reporting", async () => {
 		let extensionApi: ExtensionAPI | undefined;
 		const harness = await createHarness({
 			withConfiguredAuth: false,
@@ -307,8 +307,10 @@ describe("AgentSession prompt characterization", () => {
 		harness.session.extensionRunner.onError((error) => errorEvents.push(error.event));
 
 		await expect(sendUserMessageAndWait(extensionApi!, "cannot start")).rejects.toThrow();
+		expect(errorEvents).toEqual([]);
 
-		expect(errorEvents).toEqual(["send_user_message"]);
+		extensionApi?.sendUserMessage("cannot start");
+		await vi.waitFor(() => expect(errorEvents).toEqual(["send_user_message"]));
 		expect(harness.session.messages).toEqual([]);
 	});
 
