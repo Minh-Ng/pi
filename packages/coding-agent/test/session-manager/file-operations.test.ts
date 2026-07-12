@@ -40,12 +40,13 @@ describe("loadEntriesFromFile", () => {
 		expect(loadEntriesFromFile(file)).toEqual([]);
 	});
 
-	it("loads valid session file", () => {
+	it("loads valid session entries without exposing internal leaf markers", () => {
 		const file = join(tempDir, "valid.jsonl");
 		writeFileSync(
 			file,
-			'{"type":"session","id":"abc","timestamp":"2025-01-01T00:00:00Z","cwd":"/tmp"}\n' +
-				'{"type":"message","id":"1","parentId":null,"timestamp":"2025-01-01T00:00:01Z","message":{"role":"user","content":"hi","timestamp":1}}\n',
+			'{"type":"session","version":4,"id":"abc","timestamp":"2025-01-01T00:00:00Z","cwd":"/tmp"}\n' +
+				'{"type":"message","id":"1","parentId":null,"timestamp":"2025-01-01T00:00:01Z","message":{"role":"user","content":"hi","timestamp":1}}\n' +
+				'{"type":"session_leaf","leafId":"1","timestamp":"2025-01-01T00:00:02Z"}\n',
 		);
 		const entries = loadEntriesFromFile(file);
 		expect(entries).toHaveLength(2);

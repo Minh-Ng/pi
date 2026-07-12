@@ -4594,6 +4594,22 @@ export class InteractiveMode {
 		}
 	}
 
+	private async promptForTreeNavigationAbort(): Promise<boolean> {
+		if (this.session.isIdle) {
+			return true;
+		}
+
+		const confirmationMessage = "Abort and navigate";
+		const choice = await this.showExtensionSelector("Agent is running", [confirmationMessage, "Cancel"]);
+		if (choice !== confirmationMessage) {
+			return false;
+		}
+
+		this.restoreQueuedMessagesToEditor();
+		await this.session.abort();
+		return true;
+	}
+
 	private showTreeSelector(initialSelectedId?: string): void {
 		const tree = this.sessionManager.getTree();
 		const realLeafId = this.sessionManager.getLeafId();
@@ -4652,6 +4668,11 @@ export class InteractiveMode {
 							// User made a complete choice
 							break;
 						}
+					}
+
+					if (!(await this.promptForTreeNavigationAbort())) {
+						this.showStatus("Navigation cancelled");
+						return;
 					}
 
 					// Set up escape handler and status indicator if summarizing
