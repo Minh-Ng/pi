@@ -639,14 +639,13 @@ export class AgentSession {
 
 	private _appendAtRunCursor(parentId: string | null, advanceLeaf: boolean, append: () => string): string {
 		const visibleLeafId = this.sessionManager.getLeafId();
-		if (visibleLeafId !== parentId) {
-			if (parentId === null) this.sessionManager.resetLeaf();
-			else this.sessionManager.branch(parentId);
-		}
-
 		let entryId = "";
 		let appendFailure: { error: unknown } | undefined;
 		try {
+			if (visibleLeafId !== parentId) {
+				if (parentId === null) this.sessionManager.resetLeaf();
+				else this.sessionManager.branch(parentId);
+			}
 			entryId = append();
 		} catch (error) {
 			appendFailure = { error };
